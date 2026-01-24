@@ -1,24 +1,60 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
 export async function POST(req: Request) {
   try {
     const { message } = await req.json();
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const apiKey = process.env.GEMINI_API_KEY;
 
-    // Instrução de sistema para a IA agir como um atendente
-    const prompt = `Aja como um atendente virtual simpático. 
-    Sua resposta deve ser curta e direta (máximo 2 frases). 
-    Pergunta do usuário: ${message}`;
+    if (!apiKey) {
+      return NextResponse.json({ error: "Chave não configurada" }, { status: 500 });
+    }
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
+    // 1. LISTAR MODELOS DISPONÍVEIS (O seu 'list models')
+    const listUrl = `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`;
+    const listRes = await fetch(listUrl);
+    const listData = await listRes.json();
 
-    return NextResponse.json({ text });
-  } catch (error) {
-    return NextResponse.json({ error: "Erro ao consultar a IA" }, { status: 500 });
+    if (!listData.models) {
+      console.error("Não foi possível listar modelos:", listData);
+      return NextResponse.json({ error: "Falha ao verificar modelos disponíveis" }, { status: 500 });
+    }
+
+    // 2. FILTRAR O MELHOR MODELO (Preferência por Flash, senão Pro)
+    // Procuramos por modelos que suportem 'generateContent'
+    const availableModels = listData.models
+      .filter((m: any) => m.supportedGenerationMethods.includes("generateContent"))
+      .map((m: any) => m.name);
+
+    // console.log("Modelos que você pode usar:", availableModels);
+
+    const bestModel = availableModels.find((name: string) => name.includes("models/gemini-2.5-flash")) 
+                     || availableModels[0];
+
+    console.log("Modelo escolhido para o Alex:", bestModel);
+
+    // 3. FAZER A CHAMADA COM O MODELO QUE REALMENTE EXISTE
+    const chatUrl = `https://generativelanguage.googleapis.com/v1/${bestModel}:generateContent?key=${apiKey}`;
+
+    const response = await fetch(chatUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: message }] }],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 250 }
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.error) {
+      return NextResponse.json({ error: data.error.message }, { status: 400 });
+    }
+
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "Sem resposta";
+    return NextResponse.json({ text, modelUsed: bestModel });
+
+  } catch (error: any) {
+    console.error("ERRO CRÍTICO:", error.message);
+    return NextResponse.json({ error: "Falha interna", details: error.message }, { status: 500 });
   }
 }

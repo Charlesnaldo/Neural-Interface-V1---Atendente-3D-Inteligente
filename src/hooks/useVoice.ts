@@ -12,7 +12,7 @@ export const useVoice = () => {
 
     const utterance = new SpeechSynthesisUtterance(text)
     utterance.lang = 'pt-BR'
-    utterance.rate = 1.2 // Velocidade um pouco mais humana
+    utterance.rate = 1.2 // Velocidade 
 
     utterance.onstart = () => setIsSpeaking(true)
     utterance.onend = () => setIsSpeaking(false)

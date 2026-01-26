@@ -1,23 +1,40 @@
 'use client'
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 
 export const useVoice = () => {
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
 
-  const speak = (text: string) => {
-    if (typeof window === 'undefined') return
+  const speak = async (text: string) => {
+    try {
+      setIsSpeaking(true)
 
-    // Cancela falas anteriores
-    window.speechSynthesis.cancel()
+      const response = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
 
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.lang = 'pt-BR'
-    utterance.rate = 1.2 // Velocidade 
+      if (!response.ok) throw new Error("Erro ao gerar voz")
 
-    utterance.onstart = () => setIsSpeaking(true)
-    utterance.onend = () => setIsSpeaking(false)
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
 
-    window.speechSynthesis.speak(utterance)
+      // Toca o áudio
+      if (audioRef.current) audioRef.current.pause()
+      const audio = new Audio(url)
+      audioRef.current = audio
+      
+      audio.onended = () => {
+        setIsSpeaking(false)
+        URL.revokeObjectURL(url) 
+      }
+
+      await audio.play()
+    } catch (error) {
+      console.error("Voz Profissional falhou:", error)
+      setIsSpeaking(false)
+    }
   }
 
   return { speak, isSpeaking }

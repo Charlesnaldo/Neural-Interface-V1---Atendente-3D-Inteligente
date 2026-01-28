@@ -1,4 +1,4 @@
-// src/app/page.tsx
+
 import AtendenteInterface from '@/components/AtendenteInterface'
 
 export default function Home() {

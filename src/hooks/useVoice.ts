@@ -37,5 +37,5 @@ export const useVoice = () => {
     }
   }
 
-  return { speak, isSpeaking }
+  return { speak, isSpeaking, audio: audioRef.current }
 }

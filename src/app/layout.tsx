@@ -5,7 +5,7 @@ import "./globals.css";
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
-  display: 'swap', // Melhora a performance de carregamento da fonte
+  display: 'swap', 
 });
 
 const geistMono = Geist_Mono({
@@ -14,20 +14,20 @@ const geistMono = Geist_Mono({
   display: 'swap',
 });
 
-// Metadados personalizados para o seu Atendente Alex
+
 export const metadata: Metadata = {
-  title: "Alex AI | Atendente Virtual Inteligente",
+  title: "Zord AI | Atendente Virtual Inteligente",
   description: "Interface de atendimento neural avançada equipada com Gemini 2.5 Flash.",
-  keywords: ["IA", "Atendente Virtual", "Next.js", "Gemini API", "Alex AI"],
+  keywords: ["IA", "Atendente Virtual", "Next.js", "Gemini API", "Cicero AI"],
   authors: [{ name: "Ronaldo Charles" }],
 };
 
-// Garante que o layout se comporte bem em dispositivos móveis
+
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  userScalable: false, // Evita zoom acidental ao digitar no chat
+  userScalable: false, 
 };
 
 export default function RootLayout({

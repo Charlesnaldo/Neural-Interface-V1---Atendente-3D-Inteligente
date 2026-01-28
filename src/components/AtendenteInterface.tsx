@@ -1,103 +1,128 @@
 'use client'
 
-import dynamic from 'next/dynamic'
-import { Suspense, useState } from 'react'
+import { Vortex } from "@/components/ui/vortex"
+import { Suspense, useState, useRef } from 'react'
 import { useVoice } from '@/hooks/useVoice'
+import dynamic from 'next/dynamic'
 
-const FaceScene = dynamic(() => import('@/components/canvas/FaceScene'), { 
-  ssr: false,
-})
+const FaceScene = dynamic(() => import('@/components/canvas/FaceScene'), { ssr: false })
 
 export default function AtendenteInterface() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [isListening, setIsListening] = useState(false) // Estado para saber se está ouvindo
   const { speak, isSpeaking } = useVoice()
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!input.trim() || loading) return
-
-    const userMessage = input // Salva o input antes de limpar
+  // Função unificada para processar a mensagem
+  const processMessage = async (message: string) => {
+    if (!message.trim() || loading || isSpeaking) return
     setLoading(true)
-    setInput('') // Limpa o campo imediatamente para melhor UX
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage }),
+        body: JSON.stringify({ message }),
       })
-      
-      const data = await res.json() // Lemos o JSON apenas UMA VEZ aqui
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Erro na requisição');
-      }
-
-      // 2. SUCESSO! Agora fazemos o Alex falar o texto retornado
-      if (data.text) {
-        speak(data.text) // O hook useVoice deve gerenciar o isSpeaking internamente
-      }
-
-    } catch (err: any) {
-      console.error("Erro na comunicação com Alex:", err)
-      // Feedback visual simples em caso de erro
-      speak("Desculpe, tive um erro no meu sistema neural.") 
+      const data = await res.json()
+      if (data.text) speak(data.text)
+    } catch (err) {
+      console.error("Erro neural:", err)
     } finally {
       setLoading(false)
+      setInput('')
     }
   }
 
-  return (
-    <main className="relative h-screen w-full bg-neutral-950 overflow-hidden">
-      {/* Camada 3D */}
-      <div className="absolute inset-0 z-0">
-        <Suspense fallback={
-          <div className="h-full w-full flex items-center justify-center text-white font-mono uppercase tracking-widest animate-pulse">
-            Iniciando Sistemas Neurais...
-          </div>
-        }>
-          <FaceScene isSpeaking={isSpeaking} />
-        </Suspense>
-      </div>
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    processMessage(input)
+  }
 
-      {/* Camada de UI */}
-      <div className="relative z-10 flex flex-col justify-between h-full p-8 pointer-events-none">
-        <header className="pointer-events-auto">
-          <div className="flex items-center gap-3">
-            {/* Indicador de status mais "tech" */}
-            <div className={`w-3 h-3 rounded-full shadow-[0_0_10px] transition-colors duration-500 ${
-              isSpeaking ? 'bg-blue-500 shadow-blue-500 animate-pulse' : 'bg-green-500 shadow-green-500'
-            }`} />
-            <h1 className="text-white/50 text-xs font-mono tracking-[0.3em] uppercase">
-              {isSpeaking ? 'Alex: Transmitindo Voz' : 'Alex: Standby'}
-            </h1>
+  // LÓGICA DE AUDIÇÃO
+  const startListening = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+      alert("Navegador sem suporte a voz.");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'pt-BR';
+    
+    recognition.onstart = () => setIsListening(true);
+    recognition.onend = () => setIsListening(false);
+    
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      processMessage(transcript); // Envia o que ouviu direto para o Groq
+    };
+
+    recognition.start();
+  }
+
+  return (
+    <main className="h-screen w-full bg-black overflow-hidden flex items-center justify-center">
+      <Vortex
+        backgroundColor="black"
+        rangeY={800}
+        particleCount={300}
+        baseSpeed={0.2}
+        baseHue={0}
+        containerClassName="bg-black"
+        className="flex items-center justify-center flex-col w-full h-full"
+      >
+        <header className="absolute top-12 z-20">
+          <div className="bg-neutral-900/50 backdrop-blur-2xl border border-white/5 px-6 py-2 rounded-full flex items-center gap-3">
+            <div className={`w-1.5 h-1.5 rounded-full transition-all duration-500 ${
+                isSpeaking ? 'bg-white shadow-[0_0_8px_#fff]' : 
+                isListening ? 'bg-red-500 shadow-[0_0_8px_#ef4444]' : 'bg-neutral-700'
+              }`} />
+            <span className="text-[9px] text-neutral-500 font-mono tracking-[0.4em] uppercase">
+              {isSpeaking ? 'Cícero Falando' : isListening ? 'Cícero Ouvindo' : 'Sistema Standby'}
+            </span>
           </div>
         </header>
 
-        {/* Rodapé com Input */}
-        <footer className="w-full max-w-xl mx-auto pointer-events-auto mb-4">
-          <form 
-            onSubmit={handleSendMessage}
-            className="bg-black/40 backdrop-blur-2xl border border-white/10 p-4 rounded-2xl shadow-2xl transition-all focus-within:border-white/30 group"
-          >
-            <div className="flex items-center gap-4">
-              <input 
-                type="text" 
+        <div className="relative w-full max-w-[600px] aspect-square z-10">
+          <div className={`absolute inset-0 bg-white/5 rounded-full blur-[120px] transition-opacity duration-1000 ${isSpeaking ? 'opacity-100' : 'opacity-0'}`} />
+
+          <div className="relative w-full h-full rounded-full border border-white/[0.03] bg-neutral-950/20 backdrop-blur-md overflow-hidden shadow-2xl">
+            <Suspense fallback={null}>
+              <FaceScene isSpeaking={isSpeaking} />
+            </Suspense>
+          </div>
+        </div>
+
+        <footer className="w-full max-w-lg mt-12 z-20">
+          <form onSubmit={handleFormSubmit} className="bg-neutral-900/40 border border-white/[0.05] p-1.5 rounded-xl transition-all focus-within:border-white/20">
+            <div className="flex items-center gap-4 px-4 py-2">
+              <input
+                type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                disabled={loading}
-                placeholder={loading ? "ALEX está processando..." : "Envie um comando para o Alex..."} 
-                className="flex-1 bg-transparent text-white outline-none placeholder:text-neutral-700 font-light tracking-wide disabled:opacity-50"
+                placeholder={isListening ? "Ouvindo atentamente..." : "Comando silencioso..."}
+                className="flex-1 bg-transparent text-neutral-400 outline-none placeholder:text-neutral-800 text-xs font-light tracking-widest uppercase"
               />
-              {loading && (
-                <div className="w-4 h-4 border-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
-              )}
+              
+              {/* BOTÃO DE MICROFONE */}
+              <button
+                type="button"
+                onClick={startListening}
+                disabled={loading || isSpeaking}
+                className={`transition-all duration-300 ${
+                  isListening ? 'text-white scale-125' : 'text-neutral-700 hover:text-neutral-400'
+                }`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>
+                </svg>
+              </button>
             </div>
           </form>
-         
         </footer>
-      </div>
+      </Vortex>
     </main>
   )
 }

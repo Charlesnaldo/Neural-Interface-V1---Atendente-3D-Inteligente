@@ -11,7 +11,7 @@ export async function POST(req: Request) {
     }
 
     // ID da voz (Rachel - voz feminina padrão bem natural)
-    const voiceId = "ycxdm1PRMs962FxyyuJ0"; 
+    const voiceId = "iP95p4xoKVk53GoZ742B"; 
 
     const response = await fetch(
       `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,

@@ -1,30 +1,31 @@
-'use client'
-
+// src/components/canvas/FaceScene.tsx
 import { Canvas } from '@react-three/fiber'
-import FaceModel from './FaceModel' // Ajuste o caminho se necessário
-import { Environment, OrbitControls } from '@react-three/drei'
+import { Environment, ContactShadows } from '@react-three/drei'
+import FaceModel from './FaceModel'
 
-// Definimos a interface para o TypeScript parar de reclamar
-interface FaceSceneProps {
-  isSpeaking: boolean
-}
-
-export default function FaceScene({ isSpeaking }: FaceSceneProps) {
+export default function FaceScene({ isSpeaking }: { isSpeaking: boolean }) {
   return (
-    <Canvas camera={{ position: [0, 0, 4], fov: 35 }}>
-      <ambientLight intensity={1.5} />
-      <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} />
-      <pointLight position={[-10, -10, -10]} />
+    <Canvas 
+      // O fov 30 é ótimo para retratos (evita distorcer o nariz)
+      camera={{ position: [0, 0, 4.5], fov: 90 }} 
+      // Garante que o Canvas preencha a DIV circular da interface
+      style={{ width: '100%', height: '100%' }}
+    >
+      {/* Luz ambiente suave */}
+      <ambientLight intensity={0.8} />
       
+      {/* Luz direcional para criar sombras no rosto e dar volume */}
+      <pointLight position={[5, 5, 5]} intensity={1.5} />
+      <pointLight position={[-5, 5, -5]} intensity={0.5} color="#3b82f6" />
+
+      {/* O Modelo Centralizado */}
       <FaceModel isSpeaking={isSpeaking} />
-      
+
+      {/* Reflexos realistas (o preset 'city' ou 'night' ajuda muito no brilho dos olhos) */}
       <Environment preset="city" />
-      <OrbitControls 
-        enablePan={false} 
-        enableZoom={false} 
-        minPolarAngle={Math.PI / 2.2} 
-        maxPolarAngle={Math.PI / 2.2} 
-      />
+
+      {/* Sombra suave no chão (opcional, se o modelo tiver corpo/pescoço longo) */}
+      <ContactShadows opacity={0.4} scale={5} blur={2} far={1} />
     </Canvas>
   )
 }

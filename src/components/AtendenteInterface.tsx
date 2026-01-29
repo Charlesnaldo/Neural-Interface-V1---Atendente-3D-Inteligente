@@ -23,11 +23,11 @@ export default function AtendenteInterface() {
   const [isListening, setIsListening] = useState(false)
   const [faceCoords, setFaceCoords] = useState({ x: 0.5, y: 0.5 })
   
-  const { speak, isSpeaking } = useVoice()
+  const { speak, isSpeaking, unlockAudio } = useVoice()
   const videoRef = useRef<HTMLVideoElement>(null)
   const socketRef = useRef<WebSocket | null>(null)
 
-  // --- 1. LÓGICA DE VISÃO (WEBSOCKET + WEBCAM) ---
+  // --- 1. LÓGICA DE VISÃO ---
   useEffect(() => {
     navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
       .then(stream => { if (videoRef.current) videoRef.current.srcObject = stream; })
@@ -36,31 +36,20 @@ export default function AtendenteInterface() {
     socketRef.current = new WebSocket("ws://localhost:8000/ws/vision");
 
     socketRef.current.onmessage = (event) => {
-  try {
-    const data = JSON.parse(event.data);
-    console.log("Dados recebidos do Zord:", data); // Verifique isso no F12 do navegador
-
-    // 1. Lógica de Movimento
-    if (data.type === "tracking" || data.detected) {
-      setFaceCoords({ x: data.x, y: data.y });
-    } 
-    
-    // 2. Lógica de Fala (O que ele vê)
-    else if (data.type === "description") {
-      console.log("RECEBI DESCRIÇÃO:", data.text);
-      setLoading(false);
-       // Remove o estado de carregamento
-      if (data.text) {
-        console.log("Zord vai falar:", data.text);
-        speak(data.text);
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "tracking" || data.detected) {
+          setFaceCoords({ x: data.x, y: data.y });
+        } 
+        else if (data.type === "description") {
+          setLoading(false);
+          if (data.text) speak(data.text);
+        }
+      } catch (err) {
+        console.error("Erro no socket:", err);
       }
-    }
-  } catch (err) {
-    console.error("Erro no processamento do socket:", err);
-  }
-};
+    };
 
-    // Loop de rastreio facial (baixa resolução para performance)
     const interval = setInterval(() => {
       if (videoRef.current && socketRef.current?.readyState === WebSocket.OPEN) {
         const canvas = document.createElement("canvas");
@@ -73,16 +62,16 @@ export default function AtendenteInterface() {
     }, 200);
 
     return () => { clearInterval(interval); socketRef.current?.close(); };
-  }, []);
+  }, [speak]);
 
-  // --- 2. LÓGICA DE PROCESSAMENTO (GATILHO DE VISÃO + CHAT) ---
+  // --- 2. LÓGICA DE PROCESSAMENTO ---
   const processMessage = async (message: string) => {
     if (!message.trim() || loading || isSpeaking) return;
     
     const lowerMessage = message.toLowerCase();
 
-    // Verificação de comando de voz para visão
-    if (lowerMessage.includes("descreva o que vê") || lowerMessage.includes("escanear ambiente")) {
+    // Gatilho de Visão (sem precisar dizer Zord)
+    if (lowerMessage.includes("descreva") || lowerMessage.includes("escanear") || lowerMessage.includes("veja")) {
       handleVisionDescription();
       return;
     }
@@ -104,32 +93,28 @@ export default function AtendenteInterface() {
     }
   }
 
-  // Função para capturar frame de alta qualidade e enviar para o Python analisar
- const handleVisionDescription = () => {
-  if (videoRef.current && socketRef.current?.readyState === WebSocket.OPEN) {
-    setLoading(true);
-    // Dá um feedback imediato para o usuário
-    speak("Iniciando varredura óptica."); 
+  const handleVisionDescription = () => {
+    if (videoRef.current && socketRef.current?.readyState === WebSocket.OPEN) {
+      setLoading(true);
+      speak("Iniciando varredura óptica."); 
 
-    const canvas = document.createElement("canvas");
-    canvas.width = 640;
-    canvas.height = 480;
-    const ctx = canvas.getContext("2d");
-    ctx?.drawImage(videoRef.current, 0, 0, 640, 480);
-    
-    // Pegamos a imagem em alta qualidade
-    const fullFrame = canvas.toDataURL("image/jpeg", 0.5);
-    
-    // ENVIAR PARA O PYTHON
-    // O prefixo DESCRIBE: é o gatilho que o Python usa para saber que não é rastreio
-    socketRef.current.send(`DESCRIBE:${fullFrame}`);
-  }
-};
+      const canvas = document.createElement("canvas");
+      canvas.width = 640;
+      canvas.height = 480;
+      const ctx = canvas.getContext("2d");
+      ctx?.drawImage(videoRef.current, 0, 0, 640, 480);
+      
+      const fullFrame = canvas.toDataURL("image/jpeg", 0.5);
+      socketRef.current.send(`DESCRIBE:${fullFrame}`);
+    }
+  };
 
-  
   const startListening = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return alert("Navegador sem suporte a voz.");
+
+    // Desbloqueia áudio para iPhone no clique
+    unlockAudio();
 
     const recognition = new SpeechRecognition();
     recognition.lang = 'pt-BR';
@@ -162,7 +147,7 @@ export default function AtendenteInterface() {
                 loading ? 'bg-yellow-500 animate-pulse' : 'bg-neutral-700'
               }`} />
             <span className="text-[9px] text-neutral-500 font-mono tracking-[0.4em] uppercase">
-              {isSpeaking ? 'Zord Transmitindo' : isListening ? 'Zord Ouvindo' : loading ? 'Zord Processando' : 'Zord em Standby'}
+              {isSpeaking ? 'Transmitindo' : isListening ? 'Ouvindo' : loading ? 'Processando' : 'Standby'}
             </span>
           </div>
         </header>
@@ -176,7 +161,7 @@ export default function AtendenteInterface() {
           </div>
         </div>
 
-        <footer className="w-full max-w-lg mt-12 z-20">
+        <footer className="w-full max-w-lg mt-12 z-20 px-4">
           <form 
             onSubmit={(e) => { e.preventDefault(); processMessage(input); }} 
             className="bg-neutral-900/40 border border-white/[0.05] p-1.5 rounded-xl transition-all focus-within:border-cyan-500/20"
@@ -186,7 +171,7 @@ export default function AtendenteInterface() {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={isListening ? "Escaneando sua voz..." : "Enviar comando silencioso..."}
+                placeholder={isListening ? "Fale agora..." : "Enviar comando..."}
                 className="flex-1 bg-transparent text-neutral-300 outline-none placeholder:text-neutral-700 text-xs font-light tracking-widest uppercase"
               />
               
@@ -209,4 +194,3 @@ export default function AtendenteInterface() {
     </main>
   )
 }
-

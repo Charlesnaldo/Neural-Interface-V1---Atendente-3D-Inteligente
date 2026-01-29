@@ -172,7 +172,7 @@ export default function AtendenteInterface() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={isListening ? "Fale agora..." : "Enviar comando..."}
-                className="flex-1 bg-transparent text-neutral-300 outline-none placeholder:text-neutral-700 text-xs font-light tracking-widest uppercase"
+                className="flex-1 bg-transparent text-neutral-200 outline-none placeholder:text-neutral-400 text-xs font-light tracking-widest uppercase"
               />
               
               <button
@@ -180,7 +180,7 @@ export default function AtendenteInterface() {
                 onClick={startListening}
                 disabled={loading || isSpeaking}
                 className={`transition-all duration-300 ${
-                  isListening ? 'text-red-500 scale-125' : 'text-neutral-700 hover:text-neutral-400'
+                  isListening ? 'text-red-500 scale-125' : 'text-neutral-100 hover:text-neutral-400'
                 }`}
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">

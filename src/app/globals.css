@@ -123,3 +123,9 @@
     @apply bg-background text-foreground;
   }
 }
+
+@keyframes scan {
+  0% { top: 0%; opacity: 0.5; }
+  50% { opacity: 1; }
+  100% { top: 100%; opacity: 0.5; }
+}

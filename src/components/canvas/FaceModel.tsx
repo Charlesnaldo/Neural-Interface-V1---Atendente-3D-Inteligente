@@ -18,12 +18,12 @@ export default function FaceModel({ isSpeaking, faceCoords }: FaceModelProps) {
   const { gl } = useThree()
   const groupRef = useRef<THREE.Group>(null)
   const headMeshRef = useRef<THREE.Mesh | null>(null)
-  
+
   // AQUI ESTÁ O SEGREDO: Configuramos os loaders ANTES do carregamento
   const { scene, animations } = useGLTF(MODEL_URL, undefined, undefined, (loader) => {
     // 1. Configura Meshopt (Necessário para o facecap.glb)
     loader.setMeshoptDecoder(MeshoptDecoder)
-    
+
     // 2. Configura KTX2 (O que estava dando erro)
     const ktx2Loader = new KTX2Loader()
     ktx2Loader.setTranscoderPath('https://cdn.jsdelivr.net/npm/three@latest/examples/jsm/libs/basis/')

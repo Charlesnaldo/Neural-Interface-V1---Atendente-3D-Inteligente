@@ -5,7 +5,7 @@ import "./globals.css";
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
-  display: 'swap', 
+  display: 'swap',
 });
 
 const geistMono = Geist_Mono({
@@ -27,8 +27,10 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  userScalable: false, 
+  userScalable: false,
 };
+
+import { Toaster } from 'sonner'
 
 export default function RootLayout({
   children,
@@ -40,6 +42,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-neutral-950 text-white selection:bg-blue-500/30`}
       >
+        <Toaster position="top-center" theme="dark" richColors />
         {children}
       </body>
     </html>

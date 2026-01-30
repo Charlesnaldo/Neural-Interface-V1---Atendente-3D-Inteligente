@@ -33,14 +33,19 @@ Oferecer atendimento confiável, eficiente e escalável, reduzindo erros e aumen
 
 export async function POST(req: Request) {
   try {
-    const { message } = await req.json();
-    
-    
+    const { message, history = [] } = await req.json();
+
     const apiKey = process.env.GROQ_API_KEY;
 
     if (!apiKey) {
       return NextResponse.json({ error: "Chave Groq ausente" }, { status: 500 });
     }
+
+    const messages = [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...history.slice(-10), // Limita aos últimos 10 turnos para economia de tokens
+      { role: "user", content: message }
+    ];
 
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
@@ -49,14 +54,10 @@ export async function POST(req: Request) {
         "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        
-        model: "llama-3.1-8b-instant", 
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: message }
-        ],
+        model: "llama-3.1-8b-instant",
+        messages,
         temperature: 0.7,
-        max_tokens: 150,
+        max_tokens: 250,
       }),
     });
 

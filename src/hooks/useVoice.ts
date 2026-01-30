@@ -43,5 +43,10 @@ export const useVoice = () => {
     window.speechSynthesis.speak(utterance);
   }, []);
 
-  return { speak, isSpeaking, unlockAudio }
+  const stop = useCallback(() => {
+    window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+  }, []);
+
+  return { speak, stop, isSpeaking, unlockAudio }
 }

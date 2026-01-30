@@ -1,5 +1,7 @@
 'use client'
 
+// O container visual do rosto 3D com seus efeitos de brilho.
+
 import React, { Suspense } from 'react'
 
 interface FaceDisplayProps {

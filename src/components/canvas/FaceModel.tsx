@@ -11,11 +11,12 @@ const MODEL_URL = '/models/facecap.glb'
 
 interface FaceModelProps {
   isSpeaking: boolean;
+  loading: boolean;
   faceCoords: { x: number; y: number };
   expression: 'neutral' | 'smile' | 'sad';
 }
 
-export default function FaceModel({ isSpeaking, faceCoords, expression }: FaceModelProps) {
+export default function FaceModel({ isSpeaking, loading, faceCoords, expression }: FaceModelProps) {
   const { gl } = useThree()
   const groupRef = useRef<THREE.Group>(null)
   const headMeshesRef = useRef<THREE.Mesh[]>([])
@@ -80,13 +81,27 @@ export default function FaceModel({ isSpeaking, faceCoords, expression }: FaceMo
       if (dict['eyeBlink_L'] !== undefined) influences[dict['eyeBlink_L']] = THREE.MathUtils.lerp(influences[dict['eyeBlink_L']], blinkTarget, isBlinking ? 0.9 : 0.2)
       if (dict['eyeBlink_R'] !== undefined) influences[dict['eyeBlink_R']] = THREE.MathUtils.lerp(influences[dict['eyeBlink_R']], blinkTarget, isBlinking ? 0.9 : 0.2)
 
-      // Micro-movimentos do olhar (eyeLook) para não ficar estático
-      const lookX = Math.sin(t * 0.5) * 0.1
-      const lookY = Math.cos(t * 0.3) * 0.1
-      if (dict['eyeLookOut_L'] !== undefined) influences[dict['eyeLookOut_L']] = THREE.MathUtils.lerp(influences[dict['eyeLookOut_L']], lookX > 0 ? lookX : 0, 0.1)
-      if (dict['eyeLookIn_R'] !== undefined) influences[dict['eyeLookIn_R']] = THREE.MathUtils.lerp(influences[dict['eyeLookIn_R']], lookX > 0 ? lookX : 0, 0.1)
-      if (dict['eyeLookDown_L'] !== undefined) influences[dict['eyeLookDown_L']] = THREE.MathUtils.lerp(influences[dict['eyeLookDown_L']], lookY < 0 ? -lookY : 0, 0.1)
-      if (dict['eyeLookDown_R'] !== undefined) influences[dict['eyeLookDown_R']] = THREE.MathUtils.lerp(influences[dict['eyeLookDown_R']], lookY < 0 ? -lookY : 0, 0.1)
+      // --- EYE TRACKING & THINKING ---
+      let targetLookX = (fx - 0.5) * 2.0
+      let targetLookY = (fy - 0.5) * -2.0
+
+      // Se estiver pensando (loading), olhos movem erraticamente para simular processamento
+      if (loading) {
+        targetLookX = Math.sin(t * 2) * 0.5
+        targetLookY = 0.5 + Math.cos(t * 1.5) * 0.3
+      }
+
+      // Aplicar Eye Tracking (Vertical)
+      if (dict['eyeLookUp_L'] !== undefined) influences[dict['eyeLookUp_L']] = THREE.MathUtils.lerp(influences[dict['eyeLookUp_L']], targetLookY > 0 ? targetLookY : 0, 0.1)
+      if (dict['eyeLookUp_R'] !== undefined) influences[dict['eyeLookUp_R']] = THREE.MathUtils.lerp(influences[dict['eyeLookUp_R']], targetLookY > 0 ? targetLookY : 0, 0.1)
+      if (dict['eyeLookDown_L'] !== undefined) influences[dict['eyeLookDown_L']] = THREE.MathUtils.lerp(influences[dict['eyeLookDown_L']], targetLookY < 0 ? -targetLookY : 0, 0.1)
+      if (dict['eyeLookDown_R'] !== undefined) influences[dict['eyeLookDown_R']] = THREE.MathUtils.lerp(influences[dict['eyeLookDown_R']], targetLookY < 0 ? -targetLookY : 0, 0.1)
+
+      // Aplicar Eye Tracking (Horizontal)
+      if (dict['eyeLookOut_L'] !== undefined) influences[dict['eyeLookOut_L']] = THREE.MathUtils.lerp(influences[dict['eyeLookOut_L']], targetLookX < 0 ? -targetLookX : 0, 0.1)
+      if (dict['eyeLookIn_L'] !== undefined) influences[dict['eyeLookIn_L']] = THREE.MathUtils.lerp(influences[dict['eyeLookIn_L']], targetLookX > 0 ? targetLookX : 0, 0.1)
+      if (dict['eyeLookIn_R'] !== undefined) influences[dict['eyeLookIn_R']] = THREE.MathUtils.lerp(influences[dict['eyeLookIn_R']], targetLookX < 0 ? -targetLookX : 0, 0.1)
+      if (dict['eyeLookOut_R'] !== undefined) influences[dict['eyeLookOut_R']] = THREE.MathUtils.lerp(influences[dict['eyeLookOut_R']], targetLookX > 0 ? targetLookX : 0, 0.1)
 
       // --- 2. GESTAO DE EMOCOES (Smile / Sad / Neutral) ---
       let baseSmile = 0.2
@@ -134,7 +149,9 @@ export default function FaceModel({ isSpeaking, faceCoords, expression }: FaceMo
       if (dict['mouthUpperUp_R'] !== undefined) influences[dict['mouthUpperUp_R']] = THREE.MathUtils.lerp(influences[dict['mouthUpperUp_R']], 0.15, 0.05)
 
       // --- 4. SOBRANCELHAS (Expressividade) ---
-      const browTarget = baseBrowSad + (isSpeaking ? sSlow * 0.4 : 0.1)
+      let browTarget = baseBrowSad + (isSpeaking ? sSlow * 0.4 : 0.1)
+      if (loading) browTarget = 0.5 + Math.sin(t * 5) * 0.2 // Sobrancelha "pensativa" (inquietude)
+
       if (dict['browInnerUp'] !== undefined) influences[dict['browInnerUp']] = THREE.MathUtils.lerp(influences[dict['browInnerUp']], browTarget, 0.1)
       if (dict['browOuterUp_L'] !== undefined) influences[dict['browOuterUp_L']] = THREE.MathUtils.lerp(influences[dict['browOuterUp_L']], isSpeaking ? sSlow * 0.3 : 0, 0.08)
       if (dict['browOuterUp_R'] !== undefined) influences[dict['browOuterUp_R']] = THREE.MathUtils.lerp(influences[dict['browOuterUp_R']], isSpeaking ? sSlow * 0.3 : 0, 0.08)

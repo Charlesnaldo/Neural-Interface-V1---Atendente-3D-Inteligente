@@ -71,3 +71,19 @@ npm run dev
 [ ] Glow Reativo: Fazer o brilho do Vortex pulsar conforme a frequÃªncia do Ã¡udio capturado.
 
 Nota  "CÃ­cero nÃ£o Ã© apenas um chatbot; Ã© um experimento em fidelidade visual e interaÃ§Ã£o humanizada. O segredo da imersÃ£o estÃ¡ nos micro-movimentos que adicionei."
+??? Visão Computacional e Banco de Fotos
+O módulo Zord-vision conecta o modelo Gemini Flash 2.5 ao pipeline óptico para interpretar cenas e responder à pergunta  o que você está vendo?. O serviço mantém uma lista local de rostos detectados, salvando novos registros automaticamente e comparando-os ao banco sempre que um rosto familiar reaparece. Quando a visão fica offline ou o modelo não é encontrado, o console registra COMANDO DE VISÃO IDENTIFICADO seguido de ERRO DE VISÃO e a interface mostra um aviso persistente avisando sobre o sensor. Você pode inspecionar essa lógica dentro de Zord-vision/.
+
+?? Voz e Feedback
+A primeira tentativa de TTS usa a API da @elevenlabs via rota /api/tts; caso o token (ELEVENLABS_API_KEY no .env.local) esteja inválido ou a chamada retorne 401, o fallback usa o sintetizador nativo do navegador para emular uma voz robótica. As callbacks sincronizam jawOpen e expressões faciais com cada fala, e o comando parar interrompe a reprodução em andamento.
+
+?? Experiência de Atendente
+O Zord atua como atendente de lanchonete: ao mostrar o cardápio, o painel se desloca para um canto reservado e as respostas geradas pelo Gemini ganham contexto adicional (resumo de ofertas, sugestão de combos, etc.). O avatar evita conversar consigo mesmo, mantendo o microfone apenas em modo escuta quando o usuário fala, e ajusta as sobrancelhas e boca de forma suave para reforçar naturalidade enquanto o TTS está ativo.
+
+?? Monitoramento e Diagnóstico
+A integração com o socket de visão notifica o usuário (UI e logs) sempre que a conexão falha. O hook useVision expõe 	riggerDescription que o frontend chama quando o usuário diz descreva o que você vê, e as falhas em sensores ópticos aparecem com razão e solução propostas para acelerar o debug.
+
+?? Próximos Ajustes
+[ ] Cardápio no canto da tela com animação de deslocamento e Glossário de ofertas fixo.
+[ ] Avisos visuais para sensores offline, sincronizados ao hook useVision.
+[ ] Fluxo de reconhecimento facial com armazenamento de rostos em Zord-vision/faces.

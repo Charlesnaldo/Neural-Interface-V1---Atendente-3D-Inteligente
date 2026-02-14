@@ -8,6 +8,8 @@ interface UseVisionProps {
 export function useVision({ onSpeak, videoRef }: UseVisionProps) {
   const [faceCoords, setFaceCoords] = useState({ x: 0.5, y: 0.5 });
   const [isVisionLoading, setIsVisionLoading] = useState(false);
+  const [recognizedFace, setRecognizedFace] = useState<string | null>(null);
+  const [visionStatus, setVisionStatus] = useState<'connecting' | 'online' | 'offline'>('connecting');
 
   const socketRef = useRef<WebSocket | null>(null);
   const orbitalCanvasRef = useRef<HTMLCanvasElement | null>(null); // Canvas pequeno para tracking contínuo
@@ -42,6 +44,7 @@ export function useVision({ onSpeak, videoRef }: UseVisionProps) {
 
       socketRef.current.onopen = () => {
         console.log("Vision Socket Connected");
+        setVisionStatus('online');
       };
 
       socketRef.current.onmessage = (event) => {
@@ -54,6 +57,7 @@ export function useVision({ onSpeak, videoRef }: UseVisionProps) {
           else if (data.type === "description") {
             setIsVisionLoading(false);
             if (data.text) onSpeak(data.text);
+            setRecognizedFace(data.recognized || null);
           }
         } catch (err) {
           console.error("Erro no processamento da mensagem do socket:", err);
@@ -64,9 +68,17 @@ export function useVision({ onSpeak, videoRef }: UseVisionProps) {
       socketRef.current.onerror = (err) => {
         console.error("Erro no socket de visão:", err);
         setIsVisionLoading(false);
+        setVisionStatus('offline');
+        setRecognizedFace(null);
+      };
+
+      socketRef.current.onclose = () => {
+        setVisionStatus('offline');
+        setRecognizedFace(null);
       };
     } catch (e) {
       console.error("Falha ao inicializar WebSocket:", e);
+      setVisionStatus('offline');
     }
 
     // Loop de envio de frames para tracking (Low Res)
@@ -115,9 +127,11 @@ export function useVision({ onSpeak, videoRef }: UseVisionProps) {
     }
   }, [onSpeak, videoRef]);
 
-  return {
+      return {
     faceCoords,
     isVisionLoading,
-    triggerDescription
+    triggerDescription,
+    visionStatus,
+    recognizedFace
   };
 }

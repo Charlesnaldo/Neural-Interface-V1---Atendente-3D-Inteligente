@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-export const useSpeechToText = (onFinalTranscript: (text: string) => void) => {
+export const useSpeechToText = (onFinalTranscript: (text: string) => void, isSpeaking: boolean) => {
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
   const isListeningRef = useRef(false); // Desejo do usuário (ligar/desligar)
   const isActiveRef = useRef(false);    // Estado real do hardware (ocupado/livre)
+  const isSpeakingRef = useRef(isSpeaking);
 
   // Memoize the transcript handler to avoid unnecessary effect triggers
   const handleResult = useCallback((event: any) => {
+    if (isSpeakingRef.current) return;
     const transcript = event.results[event.results.length - 1][0].transcript;
     onFinalTranscript(transcript);
   }, [onFinalTranscript]);
@@ -70,7 +72,12 @@ export const useSpeechToText = (onFinalTranscript: (text: string) => void) => {
     };
   }, [handleResult]);
 
+  useEffect(() => {
+    isSpeakingRef.current = isSpeaking;
+  }, [isSpeaking]);
+
   const startListening = useCallback(() => {
+    if (isSpeaking) return;
     if (recognitionRef.current) {
       isListeningRef.current = true;
       setIsListening(true);
@@ -84,7 +91,7 @@ export const useSpeechToText = (onFinalTranscript: (text: string) => void) => {
         }
       }
     }
-  }, []);
+  }, [isSpeaking]);
 
   const stopListening = useCallback(() => {
     isListeningRef.current = false; // Usuário não quer mais ouvir
@@ -99,13 +106,20 @@ export const useSpeechToText = (onFinalTranscript: (text: string) => void) => {
     }
   }, []);
 
+  useEffect(() => {
+    if (isSpeaking) {
+      stopListening();
+    }
+  }, [isSpeaking, stopListening]);
+
   const toggleListening = useCallback(() => {
     if (isListeningRef.current) {
       stopListening();
     } else {
+      if (isSpeaking) return;
       startListening();
     }
-  }, [startListening, stopListening]);
+  }, [isSpeaking, startListening, stopListening]);
 
   return { isListening, toggleListening, startListening, stopListening };
 };

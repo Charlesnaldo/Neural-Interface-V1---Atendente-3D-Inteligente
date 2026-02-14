@@ -3,6 +3,7 @@
 import { Vortex } from "@/components/ui/vortex"
 import { useState, useRef, useCallback, useEffect } from 'react'
 import dynamic from 'next/dynamic'
+import type { FaceSceneProps } from '@/components/canvas/FaceScene'
 
 // --- DESIGNER (UI Components) ---
 import { StatusHeader } from './interface/StatusHeader'
@@ -16,16 +17,8 @@ import { useVoice } from '@/hooks/useVoice'
 import { useVision } from '@/hooks/useVision'
 import { useSpeechToText } from '@/hooks/useSpeechToText'
 
-// Tipagem para o componente dinâmico
-interface FaceSceneProps {
-  isSpeaking: boolean;
-  loading: boolean;
-  faceCoords: { x: number; y: number };
-  expression: 'neutral' | 'smile' | 'sad';
-}
-
 const FaceScene = dynamic<FaceSceneProps>(
-  () => import('@/components/canvas/FaceScene'),
+  () => import('@/components/canvas/FaceScene').then((mod) => mod.default),
   { ssr: false, loading: () => <div className="text-cyan-500 font-mono text-xs">INICIALIZANDO VISÃO...</div> }
 )
 
@@ -40,9 +33,10 @@ export default function AtendenteInterface() {
   const [cart, setCart] = useState<MenuItem[]>([])
   const [lastAddedId, setLastAddedId] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const [visionReport, setVisionReport] = useState('')
 
   // --- 2. GESTORES DE LOGICA (Hooks) ---
-  const { speak, stop, isSpeaking, unlockAudio } = useVoice()
+  const { speak, stop, isSpeaking, unlockAudio, audioMetrics } = useVoice()
 
   // --- SOUND DESIGN (SFX) ---
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -103,13 +97,14 @@ export default function AtendenteInterface() {
   const handleVisionDescription = useCallback((text: string) => {
     setLoading(false)
     playSFX('end')
+    setVisionReport(text || '')
     if (text) {
       setExpression(analyzeSentiment(text))
       speak(text)
     }
-  }, [speak, analyzeSentiment, playSFX])
+  }, [speak, analyzeSentiment, playSFX, setVisionReport])
 
-  const { faceCoords, triggerDescription } = useVision({
+  const { faceCoords, triggerDescription, visionStatus, recognizedFace } = useVision({
     onSpeak: handleVisionDescription,
     videoRef
   })
@@ -126,6 +121,8 @@ export default function AtendenteInterface() {
   const lastSpeakEndTime = useRef(0)
 
   // Processamento de Mensagens
+  const STOP_VOICE_PHRASES = ['pare', 'cala', 'cala a boca', 'silêncio', 'silencio', 'fica quieto', 'quieto', 'quieta', 'desliga', 'para com isso']
+
   const processMessage = useCallback(async (message: string, isVoice: boolean = false) => {
     // PROTEÇÃO ANTI-ECO: Apenas para voz, ignoramos se o Zord estiver falando ou se acabou de falar.
     const now = Date.now();
@@ -141,6 +138,14 @@ export default function AtendenteInterface() {
 
     playSFX('process')
     const lowerMessage = message.toLowerCase();
+
+    if (isVoice && STOP_VOICE_PHRASES.some(phrase => lowerMessage.includes(phrase))) {
+      stop()
+      stopListening()
+      setLoading(false)
+      setInput('')
+      return
+    }
 
     // Gatilho do Criador
     if (lowerMessage.includes("criador") || lowerMessage.includes("quem é seu criado") || lowerMessage.includes("ronaldo charles")) {
@@ -223,10 +228,18 @@ export default function AtendenteInterface() {
 
     setLoading(true)
     try {
+      const visionPayload = {
+        description: visionReport || null,
+        recognizedFace,
+        status: visionStatus,
+      }
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({
+          message,
+          visionContext: visionPayload,
+        }),
       })
       const data = await res.json()
       if (data.text) {
@@ -246,31 +259,40 @@ export default function AtendenteInterface() {
       setLoading(false)
       setInput('')
     }
-  }, [loading, isSpeaking, speak, triggerDescription, analyzeSentiment, playSFX, showMenu])
+  }, [loading, isSpeaking, speak, triggerDescription, analyzeSentiment, playSFX, showMenu, visionReport, recognizedFace, visionStatus])
 
-  const { isListening, toggleListening, startListening, stopListening } = useSpeechToText((text) => processMessage(text, true))
+  const { isListening, toggleListening, startListening, stopListening } = useSpeechToText((text) => processMessage(text, true), isSpeaking)
 
   // Ref para detectar o término da fala do Zord
   const lastIsSpeaking = useRef(false)
 
   // Efeito de Conversa Fluida (Auto-Microfone / Proteção Anti-Eco)
+  const listenCooldown = useRef<NodeJS.Timeout | null>(null)
+
   useEffect(() => {
-    // 1. Se o Zord começar a falar, DESLIGAMOS o microfone imediatamente
     if (!lastIsSpeaking.current && isSpeaking) {
       lastSpeakEndTime.current = 0;
       stopListening();
+      if (listenCooldown.current) {
+        clearTimeout(listenCooldown.current)
+        listenCooldown.current = null
+      }
     }
 
-    // 2. Se o Zord acabou de falar, marcamos o tempo e preparamos o retorno com delay
     if (lastIsSpeaking.current && !isSpeaking && !loading) {
       lastSpeakEndTime.current = Date.now();
-      const timer = setTimeout(() => {
+      listenCooldown.current = setTimeout(() => {
         if (!isListening) startListening();
-      }, 1000); // 1 segundo de silêncio absoluto antes de religar
-      return () => clearTimeout(timer);
+      }, 1500);
     }
 
     lastIsSpeaking.current = isSpeaking;
+    return () => {
+      if (listenCooldown.current) {
+        clearTimeout(listenCooldown.current)
+        listenCooldown.current = null
+      }
+    }
   }, [isSpeaking, loading, isListening, startListening, stopListening])
 
   const handleMicAction = () => {
@@ -386,9 +408,19 @@ export default function AtendenteInterface() {
           isListening={isListening}
           loading={loading}
         />
+        {visionStatus !== 'online' && (
+          <div className="absolute top-6 right-6 z-30 px-3 py-1 rounded-full border border-white/30 bg-neutral-900/70 text-[10px] tracking-[0.3em] uppercase text-orange-400">
+            {visionStatus === 'connecting' ? 'Visão carregando...' : 'Visão offline'}
+          </div>
+        )}
+        {recognizedFace && (
+          <div className="absolute top-16 right-6 z-30 px-3 py-1 rounded-full border border-cyan-400 bg-neutral-900/70 text-[10px] tracking-[0.3em] uppercase text-cyan-200">
+            {`Rosto reconhecido: ${recognizedFace}`}
+          </div>
+        )}
 
         <FaceDisplay isSpeaking={isSpeaking}>
-          <FaceScene isSpeaking={isSpeaking} loading={loading} faceCoords={faceCoords} expression={expression} />
+          <FaceScene isSpeaking={isSpeaking} loading={loading} faceCoords={faceCoords} expression={expression} audioMetrics={audioMetrics} />
         </FaceDisplay>
 
         <ChatControls

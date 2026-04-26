@@ -1,10 +1,6 @@
 ﻿import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
 export async function POST(req: Request) {
   try {
     const { text } = await req.json();
@@ -12,6 +8,10 @@ export async function POST(req: Request) {
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json({ error: "OpenAI API Key missing" }, { status: 500 });
     }
+
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
 
     const mp3 = await openai.audio.speech.create({
       model: "tts-1",

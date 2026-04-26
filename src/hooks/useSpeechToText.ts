@@ -1,125 +1,173 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+﻿import { useState, useEffect, useRef, useCallback } from 'react'
 
-export const useSpeechToText = (onFinalTranscript: (text: string) => void, isSpeaking: boolean) => {
-  const [isListening, setIsListening] = useState(false);
-  const recognitionRef = useRef<any>(null);
-  const isListeningRef = useRef(false); // Desejo do usuário (ligar/desligar)
-  const isActiveRef = useRef(false);    // Estado real do hardware (ocupado/livre)
-  const isSpeakingRef = useRef(isSpeaking);
+type SpeechRecognitionErrorCode =
+  | 'aborted'
+  | 'audio-capture'
+  | 'bad-grammar'
+  | 'language-not-supported'
+  | 'network'
+  | 'no-speech'
+  | 'not-allowed'
+  | 'service-not-allowed'
+  | string
 
-  // Memoize the transcript handler to avoid unnecessary effect triggers
-  const handleResult = useCallback((event: any) => {
-    if (isSpeakingRef.current) return;
-    const transcript = event.results[event.results.length - 1][0].transcript;
-    onFinalTranscript(transcript);
-  }, [onFinalTranscript]);
+interface SpeechRecognitionAlternativeLike {
+  transcript: string
+  confidence?: number
+}
 
-  useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+interface SpeechRecognitionResultLike {
+  0: SpeechRecognitionAlternativeLike
+}
 
-    if (SpeechRecognition && !recognitionRef.current) {
-      const recog = new SpeechRecognition();
-      recog.continuous = true;
-      recog.interimResults = false;
-      recog.lang = 'pt-BR';
+interface SpeechRecognitionEventLike extends Event {
+  results: ArrayLike<SpeechRecognitionResultLike>
+}
 
-      recog.onstart = () => {
-        console.log(">>> VOZ: Microfone Ativo.");
-        isActiveRef.current = true;
-      };
+interface SpeechRecognitionErrorEventLike extends Event {
+  error: SpeechRecognitionErrorCode
+}
 
-      recog.onresult = handleResult;
+interface SpeechRecognitionLike extends EventTarget {
+  continuous: boolean
+  interimResults: boolean
+  lang: string
+  onstart: (() => void) | null
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null
+  onend: (() => void) | null
+  start: () => void
+  stop: () => void
+  abort: () => void
+}
 
-      recog.onerror = (event: any) => {
-        // Erro de rede não reseta o desejo de ouvir (isListeningRef)
-        if (event.error === 'network') {
-          console.warn(">>> VOZ: Falha de rede. Tentando recuperar...");
-          return;
-        }
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike
 
-        if (event.error === 'no-speech') return;
+type BrowserSpeechWindow = Window & typeof globalThis & {
+  SpeechRecognition?: SpeechRecognitionCtor
+  webkitSpeechRecognition?: SpeechRecognitionCtor
+}
 
-        console.error(">>> VOZ: Erro:", event.error);
-        setIsListening(false);
-        isListeningRef.current = false;
-      };
+export const useSpeechToText = (
+  onFinalTranscript: (text: string) => void,
+  isSpeaking: boolean,
+  onBargeIn?: (text: string) => void
+) => {
+  const [isListening, setIsListening] = useState(false)
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
+  const isListeningRef = useRef(false)
+  const isActiveRef = useRef(false)
+  const isSpeakingRef = useRef(isSpeaking)
+  const lastBargeInAtRef = useRef(0)
 
-      recog.onend = () => {
-        console.log(">>> VOZ: Microfone Inativo.");
-        isActiveRef.current = false;
+  const handleResult = useCallback((event: SpeechRecognitionEventLike) => {
+    const lastIndex = event.results.length - 1
+    if (lastIndex < 0) return
 
-        // AUTO-RESTART: Se o usuário quer ouvir (isListeningRef), mas parou (onend)
-        if (isListeningRef.current) {
-          setTimeout(() => {
-            if (isListeningRef.current && !isActiveRef.current) {
-              try {
-                recognitionRef.current?.start();
-              } catch (e) {
-                // Silenciamos o erro de já iniciado aqui pois isActiveRef deve prevenir
-              }
-            }
-          }, 400); // Delay menor para recuperação rápida
-        }
-      };
-
-      recognitionRef.current = recog;
-    }
-
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
+    const result = event.results[lastIndex]?.[0]
+    const transcript = result?.transcript?.trim()
+    if (transcript) {
+      const confidence = result?.confidence ?? 0
+      const allowBargeIn = isSpeakingRef.current && onBargeIn && confidence >= 0.55 && Date.now() - lastBargeInAtRef.current > 1200
+      if (allowBargeIn) {
+        lastBargeInAtRef.current = Date.now()
+        onBargeIn(transcript)
+        return
       }
-    };
-  }, [handleResult]);
-
-  useEffect(() => {
-    isSpeakingRef.current = isSpeaking;
-  }, [isSpeaking]);
-
-  const startListening = useCallback(() => {
-    if (isSpeaking) return;
-    if (recognitionRef.current) {
-      isListeningRef.current = true;
-      setIsListening(true);
-
-      // Só inicia o hardware se ele não estiver ocupado
-      if (!isActiveRef.current) {
-        try {
-          recognitionRef.current.start();
-        } catch (e) {
-          console.warn(">>> VOZ: Tentativa de start ignorada (já ativo).");
-        }
-      }
+      onFinalTranscript(transcript)
     }
-  }, [isSpeaking]);
+  }, [onBargeIn, onFinalTranscript])
 
   const stopListening = useCallback(() => {
-    isListeningRef.current = false; // Usuário não quer mais ouvir
-    setIsListening(false);
+    isListeningRef.current = false
+    setIsListening(false)
 
     if (recognitionRef.current && isActiveRef.current) {
       try {
-        recognitionRef.current.abort();
-      } catch (e) {
-        console.error(">>> VOZ: Erro ao parar:", e);
+        recognitionRef.current.abort()
+      } catch (error) {
+        console.error('>>> VOZ: Erro ao parar:', error)
       }
     }
-  }, []);
+  }, [])
+
+  const startListening = useCallback(() => {
+    if (isSpeakingRef.current) return
+    if (!recognitionRef.current) return
+
+    isListeningRef.current = true
+    setIsListening(true)
+
+    if (!isActiveRef.current) {
+      try {
+        recognitionRef.current.start()
+      } catch {
+        console.warn('>>> VOZ: Tentativa de start ignorada (ja ativo).')
+      }
+    }
+  }, [])
 
   useEffect(() => {
-    if (isSpeaking) {
-      stopListening();
+    isSpeakingRef.current = isSpeaking
+  }, [isSpeaking])
+
+  useEffect(() => {
+    const speechWindow = window as BrowserSpeechWindow
+    const SpeechRecognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition
+
+    if (SpeechRecognition && !recognitionRef.current) {
+      const recog = new SpeechRecognition()
+      recog.continuous = true
+      recog.interimResults = false
+      recog.lang = 'pt-BR'
+
+      recog.onstart = () => {
+        isActiveRef.current = true
+      }
+
+      recog.onresult = handleResult
+
+      recog.onerror = event => {
+        if (event.error === 'network' || event.error === 'no-speech') return
+
+        console.error('>>> VOZ: Erro:', event.error)
+        isListeningRef.current = false
+        setIsListening(false)
+      }
+
+      recog.onend = () => {
+        isActiveRef.current = false
+        if (isListeningRef.current && !isSpeakingRef.current) {
+          window.setTimeout(() => {
+            if (isListeningRef.current && !isActiveRef.current && recognitionRef.current) {
+              try {
+                recognitionRef.current.start()
+              } catch {
+                // noop
+              }
+            }
+          }, 400)
+        }
+      }
+
+      recognitionRef.current = recog
     }
-  }, [isSpeaking, stopListening]);
+
+    return () => {
+      recognitionRef.current?.stop()
+      recognitionRef.current = null
+      isActiveRef.current = false
+      isListeningRef.current = false
+    }
+  }, [handleResult])
 
   const toggleListening = useCallback(() => {
     if (isListeningRef.current) {
-      stopListening();
+      stopListening()
     } else {
-      if (isSpeaking) return;
-      startListening();
+      startListening()
     }
-  }, [isSpeaking, startListening, stopListening]);
+  }, [startListening, stopListening])
 
-  return { isListening, toggleListening, startListening, stopListening };
-};
+  return { isListening, toggleListening, startListening, stopListening }
+}

@@ -9,13 +9,20 @@ import type { FaceSceneProps } from '@/components/canvas/FaceScene'
 import { StatusHeader } from './interface/StatusHeader'
 import { FaceDisplay } from './interface/FaceDisplay'
 import { ChatControls } from './interface/ChatControls'
-import { MenuDisplay, MENU_DATA, MenuItem } from './interface/MenuDisplay'
-import { CartList } from './interface/CartList'
 
 // --- ESTRUTURA (Business Logic / Hooks) ---
 import { useVoice } from '@/hooks/useVoice'
 import { useVision } from '@/hooks/useVision'
 import { useSpeechToText } from '@/hooks/useSpeechToText'
+
+type AudioWindow = Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }
+type ChatRole = 'user' | 'assistant'
+type ChatMessage = {
+  role: ChatRole
+  content: string
+}
+
+const STOP_VOICE_PHRASES = ['pare', 'cala', 'cala a boca', 'silêncio', 'silencio', 'fica quieto', 'quieto', 'quieta', 'desliga', 'para com isso']
 
 const FaceScene = dynamic<FaceSceneProps>(
   () => import('@/components/canvas/FaceScene').then((mod) => mod.default),
@@ -29,11 +36,11 @@ export default function AtendenteInterface() {
   const [loading, setLoading] = useState(false)
   const [expression, setExpression] = useState<'neutral' | 'smile' | 'sad'>('neutral')
   const [showCreator, setShowCreator] = useState(false)
-  const [showMenu, setShowMenu] = useState(false)
-  const [cart, setCart] = useState<MenuItem[]>([])
-  const [lastAddedId, setLastAddedId] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const [visionReport, setVisionReport] = useState('')
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
+  const [micEnabled, setMicEnabled] = useState(false)
+  const stopListeningRef = useRef<() => void>(() => {})
 
   // --- 2. GESTORES DE LOGICA (Hooks) ---
   const { speak, stop, isSpeaking, unlockAudio, audioMetrics } = useVoice()
@@ -44,7 +51,10 @@ export default function AtendenteInterface() {
   const playSFX = useCallback((type: 'beep' | 'process' | 'end') => {
     try {
       if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
+        const audioWindow = window as AudioWindow
+        const AudioCtor = audioWindow.AudioContext || audioWindow.webkitAudioContext
+        if (!AudioCtor) return
+        audioCtxRef.current = new AudioCtor()
       }
 
       const ctx = audioCtxRef.current
@@ -100,6 +110,7 @@ export default function AtendenteInterface() {
     setVisionReport(text || '')
     if (text) {
       setExpression(analyzeSentiment(text))
+      setChatHistory(prev => [...prev, { role: 'assistant', content: text }])
       speak(text)
     }
   }, [speak, analyzeSentiment, playSFX, setVisionReport])
@@ -121,15 +132,19 @@ export default function AtendenteInterface() {
   const lastSpeakEndTime = useRef(0)
 
   // Processamento de Mensagens
-  const STOP_VOICE_PHRASES = ['pare', 'cala', 'cala a boca', 'silêncio', 'silencio', 'fica quieto', 'quieto', 'quieta', 'desliga', 'para com isso']
-
-  const processMessage = useCallback(async (message: string, isVoice: boolean = false) => {
+  const processMessage = useCallback(async (
+    message: string,
+    isVoice: boolean = false,
+    options?: { allowWhileSpeaking?: boolean }
+  ) => {
     // PROTEÇÃO ANTI-ECO: Apenas para voz, ignoramos se o Zord estiver falando ou se acabou de falar.
     const now = Date.now();
     const timeSinceLastSpeak = now - lastSpeakEndTime.current;
     const isRecentlySpoken = isVoice && timeSinceLastSpeak < 1200;
 
-    if (!message.trim() || loading || (isVoice && isSpeaking) || isRecentlySpoken) {
+    const allowWhileSpeaking = options?.allowWhileSpeaking ?? false
+
+    if (!message.trim() || loading || (!allowWhileSpeaking && isVoice && isSpeaking) || isRecentlySpoken) {
       if (isRecentlySpoken || (isVoice && isSpeaking)) {
         console.log(`>>> ZORD: Bloqueio de Eco [Voz]. Speaking: ${isSpeaking}, Recent: ${isRecentlySpoken}`);
       }
@@ -137,11 +152,13 @@ export default function AtendenteInterface() {
     }
 
     playSFX('process')
+    const nextHistory = [...chatHistory, { role: 'user', content: message }]
+    setChatHistory(nextHistory)
     const lowerMessage = message.toLowerCase();
 
     if (isVoice && STOP_VOICE_PHRASES.some(phrase => lowerMessage.includes(phrase))) {
       stop()
-      stopListening()
+      stopListeningRef.current()
       setLoading(false)
       setInput('')
       return
@@ -169,63 +186,6 @@ export default function AtendenteInterface() {
       return
     }
 
-    // Gatilho de Cardápio e Comandos Globais
-    const isMenuOpenCommand = lowerMessage.includes("cardápio") || lowerMessage.includes("menu") || lowerMessage.includes("mostrar") || lowerMessage.includes("ver os pratos");
-    const isOrderCommand = lowerMessage.includes("adicionar") || lowerMessage.includes("pedir") || lowerMessage.includes("incluir") || lowerMessage.includes("colocar") || lowerMessage.includes("comprar") || lowerMessage.includes("quero") || lowerMessage.includes("item") || lowerMessage.includes("opção");
-    const isCloseCommand = lowerMessage.includes("fechar") || lowerMessage.includes("ocultar") || lowerMessage.includes("sair") || lowerMessage.includes("esconder") || lowerMessage.includes("obrigado") || lowerMessage.includes("concluir") || lowerMessage.includes("encerrar") || lowerMessage.includes("fecha") || lowerMessage.includes("esconde");
-
-    // Acorde prioritário para fechar o cardápio
-    if (showMenu && isCloseCommand) {
-      setShowMenu(false)
-      speak("Entendido")
-      return
-    }
-
-    if (isMenuOpenCommand) {
-      setShowMenu(true)
-      speak("Aqui está o cardápio.")
-      return
-    }
-
-    if (showMenu || isOrderCommand) {
-      const numberToDigit: { [key: string]: number } = { 'um': 1, 'dois': 2, 'três': 3, 'tres': 3, '1': 1, '2': 2, '3': 3 };
-      const numberMatch = lowerMessage.match(/(?:opção|número|adicione|item|o|é a|seria a|escolho o|nº|a|ao)?\s*\b([1-3]|um|dois|três|tres)\b/);
-
-      let foundItem: MenuItem | undefined;
-
-      if (numberMatch) {
-        const val = numberMatch[1];
-        const digit = numberToDigit[val] || parseInt(val);
-        if (digit >= 1 && digit <= 3) {
-          foundItem = MENU_DATA[digit - 1];
-        }
-      }
-
-      if (!foundItem && isOrderCommand) {
-        const itemKeywords: { [key: string]: string[] } = {
-          '1': ['hambúrguer', 'burger', 'zord', 'ultimate', 'carne', 'lanch', 'sandu'],
-          '2': ['fritas', 'batata', 'trufada', 'porção', 'frita'],
-          '3': ['shake', 'milkshake', 'baunilha', 'doce', 'sobremesa', 'gelado', 'bebida']
-        };
-
-        for (const [id, keywords] of Object.entries(itemKeywords)) {
-          if (keywords.some(kw => lowerMessage.includes(kw))) {
-            foundItem = MENU_DATA.find(item => item.id === id);
-            break;
-          }
-        }
-      }
-
-      if (foundItem) {
-        setCart(prev => [...prev, foundItem!])
-        setLastAddedId(foundItem!.id)
-        playSFX('beep')
-        speak(`Perfeito! O ${foundItem!.name} foi adicionado. Deseja algo mais?`)
-        setTimeout(() => setLastAddedId(null), 3000)
-        return
-      }
-    }
-
     setLoading(true)
     try {
       const visionPayload = {
@@ -238,6 +198,7 @@ export default function AtendenteInterface() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message,
+          history: nextHistory,
           visionContext: visionPayload,
         }),
       })
@@ -251,6 +212,7 @@ export default function AtendenteInterface() {
         if (lowerRes.includes("ronaldo charles") || lowerRes.includes("criador")) {
           setShowCreator(true)
         }
+        setChatHistory(prev => [...prev, { role: 'assistant', content: data.text }])
         speak(data.text)
       }
     } catch (err) {
@@ -259,9 +221,19 @@ export default function AtendenteInterface() {
       setLoading(false)
       setInput('')
     }
-  }, [loading, isSpeaking, speak, triggerDescription, analyzeSentiment, playSFX, showMenu, visionReport, recognizedFace, visionStatus])
+  }, [loading, isSpeaking, speak, stop, triggerDescription, analyzeSentiment, playSFX, visionReport, recognizedFace, visionStatus, chatHistory])
 
-  const { isListening, toggleListening, startListening, stopListening } = useSpeechToText((text) => processMessage(text, true), isSpeaking)
+  const { isListening, startListening, stopListening } = useSpeechToText(
+    (text) => processMessage(text, true),
+    isSpeaking,
+    (text) => {
+      stop()
+      processMessage(text, true, { allowWhileSpeaking: true })
+    }
+  )
+  useEffect(() => {
+    stopListeningRef.current = stopListening
+  }, [stopListening])
 
   // Ref para detectar o término da fala do Zord
   const lastIsSpeaking = useRef(false)
@@ -270,6 +242,28 @@ export default function AtendenteInterface() {
   const listenCooldown = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
+    if (!micEnabled) {
+      stopListening()
+      if (listenCooldown.current) {
+        clearTimeout(listenCooldown.current)
+        listenCooldown.current = null
+      }
+      lastIsSpeaking.current = isSpeaking
+      return
+    }
+
+    if (!isSpeaking && !loading && !isListening && !listenCooldown.current) {
+      listenCooldown.current = setTimeout(() => {
+        if (micEnabled && !isSpeaking && !loading && !isListening) {
+          startListening();
+        }
+        if (listenCooldown.current) {
+          clearTimeout(listenCooldown.current)
+          listenCooldown.current = null
+        }
+      }, 150);
+    }
+
     if (!lastIsSpeaking.current && isSpeaking) {
       lastSpeakEndTime.current = 0;
       stopListening();
@@ -283,7 +277,7 @@ export default function AtendenteInterface() {
       lastSpeakEndTime.current = Date.now();
       listenCooldown.current = setTimeout(() => {
         if (!isListening) startListening();
-      }, 1500);
+      }, 450);
     }
 
     lastIsSpeaking.current = isSpeaking;
@@ -293,23 +287,17 @@ export default function AtendenteInterface() {
         listenCooldown.current = null
       }
     }
-  }, [isSpeaking, loading, isListening, startListening, stopListening])
+  }, [micEnabled, isSpeaking, loading, isListening, startListening, stopListening])
 
   const handleMicAction = () => {
     unlockAudio()
+    setMicEnabled(true)
     // DUPLEX: Se eu clicar para falar e ele estiver falando, ele cala a boca na hora
     if (isSpeaking) {
       stop();
     }
     playSFX('beep')
-    toggleListening()
-  }
-
-  const handleRemoveFromCart = (index: number) => {
-    const itemToRemove = cart[index]
-    setCart(prev => prev.filter((_, i) => i !== index))
-    speak(`${itemToRemove.name} removido do pedido.`)
-    playSFX('beep')
+    startListening()
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -367,32 +355,6 @@ export default function AtendenteInterface() {
             </div>
           </div>
         </div>
-      )}
-
-      {/* Cardápio Digital em Grade */}
-      {showMenu && (
-        <MenuDisplay
-          onAddToCart={(item) => {
-            setCart(prev => [...prev, item])
-            setLastAddedId(item.id)
-            playSFX('beep')
-            speak(`${item.name} adicionado com sucesso!`)
-            setTimeout(() => setLastAddedId(null), 3000)
-          }}
-          onClose={() => {
-            setShowMenu(false)
-            speak("Tudo bem, ocultei o cardápio.")
-          }}
-          lastAddedId={lastAddedId}
-        />
-      )}
-
-      {/* Carrinho Detalhado com Soma de Itens */}
-      {cart.length > 0 && (
-        <CartList
-          items={cart}
-          onRemove={handleRemoveFromCart}
-        />
       )}
 
       <Vortex

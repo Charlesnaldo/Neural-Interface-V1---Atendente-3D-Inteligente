@@ -5,7 +5,7 @@ interface ChatControlsProps {
     setInput: (value: string) => void;
     onSubmit: (e: React.FormEvent) => void;
     startListening: () => void;
-    onStop: () => void; // Nova prop
+    onStop: () => void;
     isListening: boolean;
     loading: boolean;
     isSpeaking: boolean;
@@ -32,7 +32,7 @@ export const ChatControls = ({
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        placeholder={isListening ? "Fale agora..." : "Enviar comando..."}
+                        placeholder={isListening ? "Fale agora..." : "Escreva ou fale..."}
                         className="flex-1 bg-transparent text-neutral-200 outline-none placeholder:text-neutral-400 text-xs font-light tracking-widest uppercase"
                     />
 

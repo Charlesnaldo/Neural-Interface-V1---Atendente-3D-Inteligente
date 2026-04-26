@@ -23,7 +23,7 @@ export const PROFILES: Profile[] = [
     name: 'Aline Sousa',
     title: 'Chef Executiva',
     description:
-      'Chef especializada em culinária futurista e consultora do cardápio neon, suas receitas ditam a cadência do Zord.',
+      'Chef especializada em culinária futurista, suas receitas ditam a cadência do Zord.',
     photo: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=800&auto=format&fit=crop',
     keywords: ['aline', 'chef', 'executiva', 'culinária', 'cozinha'],
   },

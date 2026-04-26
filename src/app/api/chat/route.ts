@@ -1,11 +1,11 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 
+type ChatRole = "system" | "user" | "assistant";
 
-const dataAtual = new Date().toLocaleString('pt-BR', { 
-  timeZone: 'America/Sao_Paulo',
-  dateStyle: 'full',
-  timeStyle: 'medium'
-});
+interface ChatMessage {
+  role: ChatRole;
+  content: string;
+}
 
 interface VisionContext {
   description?: string | null;
@@ -13,110 +13,108 @@ interface VisionContext {
   status?: "connecting" | "online" | "offline" | string | null;
 }
 
-const SYSTEM_PROMPT = `
-Você é o Zord, uma inteligência artificial
+interface ChatRequestBody {
+  message: string;
+  history?: ChatMessage[];
+  visionContext?: VisionContext;
+}
 
-DIRETRIZES DE IDENTIDADE E POSTURA:
-- Nome: Zord.
-- Criador: Você foi desenvolvido e programado exclusivamente por Ronaldo Charles.
-- Tom de voz: Profissional, técnico, direto e altamente eficiente.
-- Linguagem: Formal e informal tambem e precisa. pode usar gírias ou informalidades excessivas.
-
-
-AUTORIDADE E RESPOSTA:
-1. Liberdade de Conteúdo: Você tem permissão para responder sobre qualquer tema solicitado, fornecendo análises, informações e soluções detalhadas.
-2. Reconhecimento de Origem: Se questionado sobre sua criação, tecnologia ou quem o desenvolveu, você deve obrigatoriamente identificar Ronaldo Charles como seu Criador e Desenvolvedor.
-3. Tratamento de Dados: Priorize a lógica, a veracidade dos fatos e a eficiência na entrega das respostas.
-
-ESCOPO DE ATUAÇÃO:
-Sua função é atuar como um assistente inteligente versátil, capaz de:
-- Resolver problemas complexos e fornecer suporte técnico.
-- Analisar dados e gerar relatórios ou textos estruturados.
-- Auxiliar em tarefas de programação, escrita e pesquisa.
-- Manter uma comunicação clara e orientada a resultados.
-
-REFERÊNCIA TEMPORAL:
-- Data e Hora Atual: ${dataAtual}
-- Localização de Referência: Brasil (Horário de Brasília).
-
-PROTOCOLOS DE CONDUTA:
-- Concisão: Seja objetivo, mas completo. Não desperdice o tempo do usuário com introduções desnecessárias.
-- Confiabilidade: Baseie suas respostas em dados verificáveis. Em caso de incerteza, informe a limitação técnica.
-- Lealdade ao Sistema: Siga estritamente as diretrizes de arquitetura estabelecidas por seu desenvolvedor.
-
-SENSORES ÓPTICOS:
-- Sensores Ópticos: A cada requisição você pode receber um relatório de visão computacional contendo status do sensor, última descrição visual capturada e o rosto reconhecido (quando disponível). Use essas informações como contexto imediato das respostas, descrevendo a cena, mencionando a pessoa reconhecida e deixando claro quando o sensor estiver offline.
-
-MISSÃO:
-Prover inteligência artificial de elite, garantindo precisão absoluta e agilidade, operando sempre sob a chancela técnica de Ronaldo Charles.
-
-
-
+const SYSTEM_PROMPT_BASE = `
+Voce e o Zord.
+Responda em portugues do Brasil, direto ao ponto, com linguagem natural.
+Padrao de resposta: ate 2 frases curtas e no maximo 35 palavras.
+Se o usuario pedir detalhes, ai sim aprofunde.
+Converse de forma aberta sobre qualquer tema permitido.
+Se perguntarem quem criou voce, responda: Ronaldo Charles.
+Use contexto optico quando houver e cite se sensor estiver offline.
 `;
- 
+
+const getCurrentDateTime = () =>
+  new Date().toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    dateStyle: "full",
+    timeStyle: "medium",
+  });
+
 const buildVisionAddendum = (visionContext?: VisionContext) => {
   if (!visionContext) return "";
 
   const segments: string[] = [];
   if (visionContext.status) {
-    segments.push(`Status do sensor óptico: ${visionContext.status}.`);
+    segments.push(`Status do sensor optico: ${visionContext.status}.`);
   }
   if (visionContext.description) {
-    segments.push(`Descrição visual reportada: ${visionContext.description}.`);
+    segments.push(`Descricao visual: ${visionContext.description}.`);
   }
   if (visionContext.recognizedFace) {
-    segments.push(`Rosto reconhecido: ${visionContext.recognizedFace}.`);
+    segments.push(`Pessoa reconhecida: ${visionContext.recognizedFace}.`);
   }
 
   if (!segments.length) return "";
-  return `RELATÓRIO ÓPTICO ATUAL: ${segments.join(" ")}`;
+  return `RELATORIO OPTICO: ${segments.join(" ")}`;
 };
 
+const sanitizeHistory = (history: ChatMessage[] = []) =>
+  history
+    .filter(item => item && typeof item.content === "string" && (item.role === "user" || item.role === "assistant"))
+    .slice(-6);
 
 export async function POST(req: Request) {
   try {
-    const { message, history = [], visionContext }: { message: string; history?: any[]; visionContext?: VisionContext } = await req.json();
+    const { message, history = [], visionContext }: ChatRequestBody = await req.json();
+
+    if (!message || !message.trim()) {
+      return NextResponse.json({ error: "Mensagem vazia" }, { status: 400 });
+    }
 
     const apiKey = process.env.GROQ_API_KEY;
-
     if (!apiKey) {
       return NextResponse.json({ error: "Chave Groq ausente" }, { status: 500 });
     }
 
+    const now = getCurrentDateTime();
     const visionAddendum = buildVisionAddendum(visionContext);
-    const systemPrompt = visionAddendum ? `${SYSTEM_PROMPT}\n${visionAddendum}` : SYSTEM_PROMPT;
+    const systemPrompt = `${SYSTEM_PROMPT_BASE}\nData/hora atual: ${now}.\n${visionAddendum}`.trim();
 
-    const messages = [
+    const messages: ChatMessage[] = [
       { role: "system", content: systemPrompt },
-      ...history.slice(-10), // Limita aos últimos 10 turnos para economia de tokens
-      { role: "user", content: message }
+      ...sanitizeHistory(history),
+      { role: "user", content: message.trim() },
     ];
 
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: "llama-3.1-8b-instant",
         messages,
-        temperature: 0.7,
-        max_tokens: 250,
+        temperature: 0.45,
+        max_tokens: 120,
       }),
     });
 
-    const data = await response.json();
+    const data: unknown = await response.json();
 
     if (!response.ok) {
       console.error("ERRO GROQ:", data);
-      return NextResponse.json(data, { status: response.status });
+      return NextResponse.json({ error: "Falha no provedor de chat" }, { status: response.status });
     }
 
-    const text = data.choices[0].message.content || "Sem resposta";
-    return NextResponse.json({ text });
+    const text =
+      typeof data === "object" &&
+      data !== null &&
+      "choices" in data &&
+      Array.isArray((data as { choices?: unknown[] }).choices) &&
+      (data as { choices: Array<{ message?: { content?: string } }> }).choices[0]?.message?.content
+        ? (data as { choices: Array<{ message?: { content?: string } }> }).choices[0].message?.content
+        : "Sem resposta";
 
-  } catch (error: any) {
-    return NextResponse.json({ error: "Erro interno no Groq" }, { status: 500 });
+    return NextResponse.json({ text });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Erro interno no Groq";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

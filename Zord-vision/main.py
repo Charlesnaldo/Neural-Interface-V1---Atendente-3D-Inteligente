@@ -3,7 +3,6 @@ import os
 from pathlib import Path
 
 import cv2
-import face_recognition
 import mediapipe as mp
 import numpy as np
 from dotenv import load_dotenv
@@ -11,6 +10,13 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from google.genai import types
+
+try:
+    import face_recognition
+    FACE_RECOGNITION_AVAILABLE = True
+except ModuleNotFoundError:
+    face_recognition = None
+    FACE_RECOGNITION_AVAILABLE = False
 
 # --- CONFIGURAÇÃO ---
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
@@ -37,6 +43,9 @@ FACE_MATCH_THRESHOLD = 0.45
 known_faces = []
 
 def load_known_faces():
+    if not FACE_RECOGNITION_AVAILABLE:
+        print(">>> ZORD: face_recognition indisponivel. Reconhecimento facial desativado.")
+        return
     if not KNOWN_FACES_DIR.exists():
         return
     for image_path in KNOWN_FACES_DIR.glob('*'):
@@ -50,6 +59,8 @@ def load_known_faces():
                 })
 
 def recognize_face(image: np.ndarray):
+    if not FACE_RECOGNITION_AVAILABLE:
+        return None
     if not known_faces:
         return None
     encodings = face_recognition.face_encodings(image)

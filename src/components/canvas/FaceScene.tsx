@@ -1,6 +1,6 @@
 'use client'
 import { Canvas } from '@react-three/fiber'
-import { Environment, ContactShadows } from '@react-three/drei'
+import { Environment } from '@react-three/drei'
 import { Suspense } from 'react'
 import * as THREE from 'three'
 import { EffectComposer, Bloom, ChromaticAberration } from '@react-three/postprocessing'
@@ -11,7 +11,14 @@ export interface FaceSceneProps {
   loading: boolean;
   faceCoords: { x: number; y: number };
   expression: 'neutral' | 'smile' | 'sad';
-  audioMetrics: { amplitude: number; sharpness: number };
+  audioMetrics: {
+    amplitude: number
+    sharpness: number
+    low: number
+    mid: number
+    high: number
+    dominantBand: 'low' | 'mid' | 'high'
+  };
 }
 
 export default function FaceScene({ isSpeaking, loading, faceCoords, expression, audioMetrics }: FaceSceneProps) {

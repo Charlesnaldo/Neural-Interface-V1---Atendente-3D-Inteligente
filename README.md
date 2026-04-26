@@ -1,5 +1,5 @@
 🤖 Projeto Zord: Atendente 3D Hiper-Realista
-Cícero é uma interface de inteligência artificial de próxima geração, focada em uma experiência de usuário imersiva (Immersive UI). Utiliza um modelo 3D com padrão ARKit para expressões faciais em tempo real, integrado a uma estética Noir minimalista.
+Zord é uma interface de inteligência artificial de próxima geração, focada em uma experiência de usuário imersiva (Immersive UI). Utiliza um modelo 3D com padrão ARKit para expressões faciais em tempo real, integrado a uma estética Noir minimalista.
 
 🚀 Tecnologias Utilizadas
 Framework: Next.js 14/15 (App Router)

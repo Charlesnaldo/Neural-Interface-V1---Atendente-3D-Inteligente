@@ -152,7 +152,7 @@ export default function AtendenteInterface() {
     }
 
     playSFX('process')
-    const nextHistory = [...chatHistory, { role: 'user', content: message }]
+    const nextHistory: ChatMessage[] = [...chatHistory, { role: 'user', content: message }]
     setChatHistory(nextHistory)
     const lowerMessage = message.toLowerCase();
 

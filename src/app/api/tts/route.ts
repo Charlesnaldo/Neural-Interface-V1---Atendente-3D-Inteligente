@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import net from "net";
 
 const normalizeForSpeech = (input: string) => {
   const compact = input
@@ -28,6 +29,88 @@ const normalizeForSpeech = (input: string) => {
 
   return paced.join(" ... ").slice(0, 1400);
 };
+
+// --- CLIENTE WYOMING (TCP) ---
+async function getWyomingAudio(text: string, host: string, port: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, host);
+    let chunks: Buffer[] = [];
+    let state: 'header' | 'payload' = 'header';
+    let currentHeader: any = null;
+    let buffer = Buffer.alloc(0);
+
+    socket.on('connect', () => {
+      // Evento de síntese do protocolo Wyoming
+      socket.write(JSON.stringify({
+        name: 'synthesize',
+        payload_length: null,
+        data: { text }
+      }) + '\n');
+    });
+
+    socket.on('data', (data) => {
+      buffer = Buffer.concat([buffer, data]);
+      while (true) {
+        if (state === 'header') {
+          const newlineIndex = buffer.indexOf('\n');
+          if (newlineIndex === -1) break;
+          
+          const headerStr = buffer.slice(0, newlineIndex).toString();
+          buffer = buffer.slice(newlineIndex + 1);
+          try {
+            currentHeader = JSON.parse(headerStr);
+            if (currentHeader.payload_length) {
+              state = 'payload';
+            } else {
+              if (currentHeader.name === 'synthesize-stop') {
+                socket.end();
+                return;
+              }
+            }
+          } catch (e) {
+            socket.destroy();
+            return reject(new Error("Erro ao processar protocolo Wyoming"));
+          }
+        } else {
+          if (buffer.length < currentHeader.payload_length) break;
+          const payload = buffer.slice(0, currentHeader.payload_length);
+          buffer = buffer.slice(currentHeader.payload_length);
+          
+          if (currentHeader.name === 'audio-chunk') {
+            chunks.push(payload);
+          }
+          state = 'header';
+        }
+      }
+    });
+
+    socket.on('error', (err) => {
+      console.error(">>> TCP Socket Error:", err);
+      reject(err);
+    });
+
+    socket.on('end', () => {
+      const pcmData = Buffer.concat(chunks);
+      // O Piper retorna PCM bruto. Precisamos de um cabeçalho WAV para o navegador.
+      const wavHeader = Buffer.alloc(44);
+      wavHeader.write('RIFF', 0);
+      wavHeader.writeUInt32LE(pcmData.length + 36, 4);
+      wavHeader.write('WAVE', 8);
+      wavHeader.write('fmt ', 12);
+      wavHeader.writeUInt32LE(16, 16);
+      wavHeader.writeUInt16LE(1, 20); // PCM
+      wavHeader.writeUInt16LE(1, 22); // Mono
+      wavHeader.writeUInt32LE(22050, 24); // Sample Rate
+      wavHeader.writeUInt32LE(22050 * 2, 28); // Byte Rate
+      wavHeader.writeUInt16LE(2, 32); // Block Align
+      wavHeader.writeUInt16LE(16, 34); // Bits per sample
+      wavHeader.write('data', 36);
+      wavHeader.writeUInt32LE(pcmData.length, 40);
+
+      resolve(Buffer.concat([wavHeader, pcmData]));
+    });
+  });
+}
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
@@ -61,7 +144,27 @@ export async function POST(req: Request) {
 
     const piperTtsUrl = process.env.PIPER_TTS_URL;
     if (piperTtsUrl) {
-      // Suporte para kroese/piper-http e similares que podem usar query params
+      // SE FOR PROTOCOLO WYOMING (TCP)
+      if (piperTtsUrl.startsWith("tcp://")) {
+        const url = new URL(piperTtsUrl);
+        const host = url.hostname;
+        const port = parseInt(url.port || "10200");
+
+        try {
+          const audioBuffer = await getWyomingAudio(normalizedText, host, port);
+          return new NextResponse(audioBuffer, {
+            headers: {
+              "Content-Type": "audio/wav",
+              "Content-Length": audioBuffer.byteLength.toString(),
+            },
+          });
+        } catch (err) {
+          console.error(">>> Erro Wyoming TCP:", err);
+          return NextResponse.json({ error: "Erro na conexão TCP com Piper" }, { status: 502 });
+        }
+      }
+
+      // SE FOR PROTOCOLO HTTP (ANTIGO)
       const finalUrl = piperTtsUrl.includes("?text=") 
         ? `${piperTtsUrl}${encodeURIComponent(normalizedText)}`
         : piperTtsUrl;

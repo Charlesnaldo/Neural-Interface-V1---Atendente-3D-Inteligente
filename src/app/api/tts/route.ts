@@ -47,22 +47,28 @@ async function getWyomingAudio(text: string, host: string, port: number): Promis
     let currentHeader: WyomingHeader | null = null;
     let buffer = Buffer.alloc(0);
 
+    // Aumentado para 60s para permitir download inicial da voz se necessário
     const timeout = setTimeout(() => {
+      console.error(`>>> TCP: Timeout atingido após 60s. Dados recebidos até agora: ${chunks.length} chunks`);
       socket.destroy();
-      reject(new Error("Timeout de 15s na conexão TCP"));
-    }, 15000);
+      reject(new Error("Timeout de 60s (Piper demorou a responder)"));
+    }, 60000);
 
     socket.on('connect', () => {
-      console.log(">>> TCP: Conectado ao Piper. Enviando comando synthesize...");
-      socket.write(JSON.stringify({
+      console.log(">>> TCP: Conectado. Enviando synthesize...");
+      // Enviando JSON compacto (sem espaços) que é o padrão Wyoming
+      const msg = JSON.stringify({
         name: 'synthesize',
         payload_length: null,
         data: { text }
-      }) + '\n');
+      });
+      socket.write(msg + '\n');
     });
 
     socket.on('data', (data) => {
+      // console.log(`>>> TCP: Recebidos ${data.length} bytes brutos`);
       buffer = Buffer.concat([buffer, data]);
+      
       while (true) {
         if (state === 'header') {
           const newlineIndex = buffer.indexOf('\n');
@@ -70,8 +76,11 @@ async function getWyomingAudio(text: string, host: string, port: number): Promis
           
           const headerStr = buffer.slice(0, newlineIndex).toString();
           buffer = buffer.slice(newlineIndex + 1);
+          
           try {
             currentHeader = JSON.parse(headerStr);
+            console.log(`>>> TCP: Evento recebido: ${currentHeader?.name}`);
+            
             if (currentHeader?.payload_length) {
               state = 'payload';
             } else if (currentHeader?.name === 'audio-stop' || currentHeader?.name === 'synthesize-stop') {
@@ -79,11 +88,13 @@ async function getWyomingAudio(text: string, host: string, port: number): Promis
               return;
             }
           } catch (e) {
+            console.error(">>> TCP: Falha ao processar cabeçalho:", headerStr);
             socket.destroy();
-            return reject(new Error("Protocolo corrompido"));
+            return reject(new Error("Protocolo Wyoming inválido"));
           }
         } else {
           if (!currentHeader || currentHeader.payload_length === null || buffer.length < currentHeader.payload_length) break;
+          
           const payload = buffer.slice(0, currentHeader.payload_length);
           buffer = buffer.slice(currentHeader.payload_length);
           
@@ -97,13 +108,16 @@ async function getWyomingAudio(text: string, host: string, port: number): Promis
 
     socket.on('error', (err) => {
       clearTimeout(timeout);
+      console.error(">>> TCP Erro:", err.message);
       reject(err);
     });
 
     socket.on('end', () => {
       clearTimeout(timeout);
       const pcmData = Buffer.concat(chunks);
-      if (pcmData.length === 0) return reject(new Error("Áudio vazio"));
+      console.log(`>>> TCP: Concluído. Total de áudio: ${pcmData.length} bytes.`);
+      
+      if (pcmData.length === 0) return reject(new Error("Piper retornou áudio vazio"));
 
       const wavHeader = Buffer.alloc(44);
       wavHeader.write('RIFF', 0);
@@ -142,14 +156,13 @@ export async function POST(req: Request) {
           headers: { "Content-Type": "audio/wav" }
         });
       } catch (err: any) {
-        console.error(">>> ERRO PIPER:", err.message);
+        console.error(">>> ERRO NO PIPER:", err.message);
         return NextResponse.json({ error: err.message }, { status: 502 });
       }
     }
 
-    // Fallback ElevenLabs se não houver Piper
     const apiKey = process.env.ELEVENLABS_API_KEY;
-    if (!apiKey) return NextResponse.json({ error: "Sem TTS" }, { status: 500 });
+    if (!apiKey) return NextResponse.json({ error: "Sem provedor de voz" }, { status: 500 });
 
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/iP95p4xoKVk53GoZ742B`, {
       method: "POST",
@@ -157,7 +170,7 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         text: normalizedText,
         model_id: "eleven_multilingual_v2",
-        voice_settings: { stability: 0.4, similarity_boost: 0.8 }
+        voice_settings: { stability: 0.45, similarity_boost: 0.8 }
       }),
     });
 

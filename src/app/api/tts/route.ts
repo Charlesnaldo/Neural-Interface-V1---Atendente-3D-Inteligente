@@ -152,7 +152,7 @@ export async function POST(req: Request) {
 
         try {
           const audioBuffer = await getWyomingAudio(normalizedText, host, port);
-          return new NextResponse(audioBuffer, {
+          return new NextResponse(new Uint8Array(audioBuffer), {
             headers: {
               "Content-Type": "audio/wav",
               "Content-Length": audioBuffer.byteLength.toString(),

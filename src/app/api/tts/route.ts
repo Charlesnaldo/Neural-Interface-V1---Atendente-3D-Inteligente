@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import net from "net";
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 const normalizeForSpeech = (input: string) => {
   const compact = input
     .replace(/\s+/g, " ")
@@ -30,25 +33,27 @@ const normalizeForSpeech = (input: string) => {
   return paced.join(" ... ").slice(0, 1400);
 };
 
-// --- CLIENTE WYOMING (TCP) ---
+interface WyomingHeader {
+  name: string;
+  payload_length: number | null;
+}
+
 async function getWyomingAudio(text: string, host: string, port: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    console.log(`>>> TCP: Conectando a ${host}:${port}...`);
+    console.log(`>>> TCP: Tentando conectar em ${host}:${port}...`);
     const socket = net.connect(port, host);
     let chunks: Buffer[] = [];
     let state: 'header' | 'payload' = 'header';
-    let currentHeader: any = null;
+    let currentHeader: WyomingHeader | null = null;
     let buffer = Buffer.alloc(0);
 
-    // Timeout de 10 segundos para não travar o servidor
     const timeout = setTimeout(() => {
-      console.error(">>> TCP: Timeout na conexão com Piper.");
       socket.destroy();
-      reject(new Error("Timeout na conexão com Piper"));
-    }, 10000);
+      reject(new Error("Timeout de 15s na conexão TCP"));
+    }, 15000);
 
     socket.on('connect', () => {
-      console.log(">>> TCP: Conectado. Enviando texto...");
+      console.log(">>> TCP: Conectado ao Piper. Enviando comando synthesize...");
       socket.write(JSON.stringify({
         name: 'synthesize',
         payload_length: null,
@@ -67,23 +72,18 @@ async function getWyomingAudio(text: string, host: string, port: number): Promis
           buffer = buffer.slice(newlineIndex + 1);
           try {
             currentHeader = JSON.parse(headerStr);
-            if (currentHeader.payload_length) {
+            if (currentHeader?.payload_length) {
               state = 'payload';
-            } else {
-              // No Wyoming, o fim pode vir como 'audio-stop' ou o socket fechar
-              if (currentHeader.name === 'audio-stop' || currentHeader.name === 'synthesize-stop') {
-                console.log(">>> TCP: Fim do áudio recebido.");
-                socket.end();
-                return;
-              }
+            } else if (currentHeader?.name === 'audio-stop' || currentHeader?.name === 'synthesize-stop') {
+              socket.end();
+              return;
             }
           } catch (e) {
-            console.error(">>> TCP: Erro ao ler JSON:", headerStr);
             socket.destroy();
-            return reject(new Error("Erro no protocolo Wyoming"));
+            return reject(new Error("Protocolo corrompido"));
           }
         } else {
-          if (buffer.length < currentHeader.payload_length) break;
+          if (!currentHeader || currentHeader.payload_length === null || buffer.length < currentHeader.payload_length) break;
           const payload = buffer.slice(0, currentHeader.payload_length);
           buffer = buffer.slice(currentHeader.payload_length);
           
@@ -97,18 +97,13 @@ async function getWyomingAudio(text: string, host: string, port: number): Promis
 
     socket.on('error', (err) => {
       clearTimeout(timeout);
-      console.error(">>> TCP: Erro no socket:", err.message);
       reject(err);
     });
 
     socket.on('end', () => {
       clearTimeout(timeout);
       const pcmData = Buffer.concat(chunks);
-      console.log(`>>> TCP: Processamento concluído. Bytes de áudio: ${pcmData.length}`);
-      
-      if (pcmData.length === 0) {
-        return reject(new Error("Nenhum dado de áudio recebido do Piper"));
-      }
+      if (pcmData.length === 0) return reject(new Error("Áudio vazio"));
 
       const wavHeader = Buffer.alloc(44);
       wavHeader.write('RIFF', 0);
@@ -130,121 +125,47 @@ async function getWyomingAudio(text: string, host: string, port: number): Promis
   });
 }
 
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-
-const getVoiceSettings = (text: string) => {
-  const length = text.length;
-  const commaCount = (text.match(/,/g) ?? []).length;
-  const pauseCount = (text.match(/\.{3}|[.!?]/g) ?? []).length;
-
-  const shortness = clamp((140 - length) / 140, 0, 1);
-  const structureScore = clamp((commaCount * 0.12) + (pauseCount * 0.08), 0, 0.35);
-
-  const stability = clamp(0.36 + structureScore - shortness * 0.07, 0.32, 0.48);
-  const style = clamp(0.31 + shortness * 0.08 - structureScore * 0.25, 0.18, 0.36);
-
-  return {
-    stability,
-    similarity_boost: 0.84,
-    style,
-    use_speaker_boost: true,
-  };
-};
-
 export async function POST(req: Request) {
   try {
     const { text } = await req.json();
     const normalizedText = normalizeForSpeech(String(text ?? ""));
-
-    if (!normalizedText) {
-      return NextResponse.json({ error: "Texto vazio para TTS" }, { status: 400 });
-    }
-
     const piperTtsUrl = process.env.PIPER_TTS_URL;
-    if (piperTtsUrl) {
-      if (piperTtsUrl.startsWith("tcp://")) {
-        const url = new URL(piperTtsUrl);
-        const host = url.hostname;
-        const port = parseInt(url.port || "10200");
 
-        try {
-          const audioBuffer = await getWyomingAudio(normalizedText, host, port);
-          return new NextResponse(new Uint8Array(audioBuffer), {
-            headers: {
-              "Content-Type": "audio/wav",
-              "Content-Length": audioBuffer.byteLength.toString(),
-            },
-          });
-        } catch (err: any) {
-          console.error(">>> ERRO PIPER TCP:", err.message);
-          return NextResponse.json({ error: `Erro Piper: ${err.message}` }, { status: 502 });
-        }
+    if (piperTtsUrl?.startsWith("tcp://")) {
+      const url = new URL(piperTtsUrl);
+      const host = url.hostname;
+      const port = parseInt(url.port || "10200");
+
+      try {
+        const audioBuffer = await getWyomingAudio(normalizedText, host, port);
+        return new NextResponse(new Uint8Array(audioBuffer), {
+          headers: { "Content-Type": "audio/wav" }
+        });
+      } catch (err: any) {
+        console.error(">>> ERRO PIPER:", err.message);
+        return NextResponse.json({ error: err.message }, { status: 502 });
       }
-
-      const finalUrl = piperTtsUrl.includes("?text=") 
-        ? `${piperTtsUrl}${encodeURIComponent(normalizedText)}`
-        : piperTtsUrl;
-
-      const response = await fetch(finalUrl, {
-        method: piperTtsUrl.includes("?text=") ? "GET" : "POST",
-        headers: !piperTtsUrl.includes("?text=") ? {
-          "Content-Type": "text/plain; charset=utf-8",
-        } : {},
-        body: piperTtsUrl.includes("?text=") ? null : normalizedText,
-      });
-
-      if (!response.ok) {
-        return NextResponse.json({ error: "Erro no Piper HTTP" }, { status: response.status });
-      }
-
-      const audioBuffer = await response.arrayBuffer();
-      const contentType = response.headers.get("content-type") ?? "audio/wav";
-
-      return new NextResponse(new Uint8Array(audioBuffer), {
-        headers: {
-          "Content-Type": contentType,
-          "Content-Length": audioBuffer.byteLength.toString(),
-        },
-      });
     }
 
+    // Fallback ElevenLabs se não houver Piper
     const apiKey = process.env.ELEVENLABS_API_KEY;
+    if (!apiKey) return NextResponse.json({ error: "Sem TTS" }, { status: 500 });
 
-    if (!apiKey) {
-      return NextResponse.json({ error: "Nenhum provedor de TTS configurado" }, { status: 500 });
-    }
-
-    const voiceSettings = getVoiceSettings(normalizedText);
-    const voiceId = "iP95p4xoKVk53GoZ742B";
-
-    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/iP95p4xoKVk53GoZ742B`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "xi-api-key": apiKey,
-      },
+      headers: { 'Content-Type': 'application/json', 'xi-api-key': apiKey },
       body: JSON.stringify({
         text: normalizedText,
         model_id: "eleven_multilingual_v2",
-        voice_settings: voiceSettings,
+        voice_settings: { stability: 0.4, similarity_boost: 0.8 }
       }),
     });
 
-    if (!response.ok) {
-      return NextResponse.json({ error: "Erro na ElevenLabs" }, { status: response.status });
-    }
-
-    const audioBuffer = await response.arrayBuffer();
-
+    const audioBuffer = await res.arrayBuffer();
     return new NextResponse(new Uint8Array(audioBuffer), {
-      headers: {
-        "Content-Type": "audio/mpeg",
-        "Content-Length": audioBuffer.byteLength.toString(),
-      },
+      headers: { "Content-Type": "audio/mpeg" }
     });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Erro inesperado";
-    console.error("Erro Crítico TTS:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

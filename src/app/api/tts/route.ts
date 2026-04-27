@@ -33,14 +33,22 @@ const normalizeForSpeech = (input: string) => {
 // --- CLIENTE WYOMING (TCP) ---
 async function getWyomingAudio(text: string, host: string, port: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    console.log(`>>> TCP: Conectando a ${host}:${port}...`);
     const socket = net.connect(port, host);
     let chunks: Buffer[] = [];
     let state: 'header' | 'payload' = 'header';
     let currentHeader: any = null;
     let buffer = Buffer.alloc(0);
 
+    // Timeout de 10 segundos para não travar o servidor
+    const timeout = setTimeout(() => {
+      console.error(">>> TCP: Timeout na conexão com Piper.");
+      socket.destroy();
+      reject(new Error("Timeout na conexão com Piper"));
+    }, 10000);
+
     socket.on('connect', () => {
-      // Evento de síntese do protocolo Wyoming
+      console.log(">>> TCP: Conectado. Enviando texto...");
       socket.write(JSON.stringify({
         name: 'synthesize',
         payload_length: null,
@@ -62,14 +70,17 @@ async function getWyomingAudio(text: string, host: string, port: number): Promis
             if (currentHeader.payload_length) {
               state = 'payload';
             } else {
-              if (currentHeader.name === 'synthesize-stop') {
+              // No Wyoming, o fim pode vir como 'audio-stop' ou o socket fechar
+              if (currentHeader.name === 'audio-stop' || currentHeader.name === 'synthesize-stop') {
+                console.log(">>> TCP: Fim do áudio recebido.");
                 socket.end();
                 return;
               }
             }
           } catch (e) {
+            console.error(">>> TCP: Erro ao ler JSON:", headerStr);
             socket.destroy();
-            return reject(new Error("Erro ao processar protocolo Wyoming"));
+            return reject(new Error("Erro no protocolo Wyoming"));
           }
         } else {
           if (buffer.length < currentHeader.payload_length) break;
@@ -85,25 +96,32 @@ async function getWyomingAudio(text: string, host: string, port: number): Promis
     });
 
     socket.on('error', (err) => {
-      console.error(">>> TCP Socket Error:", err);
+      clearTimeout(timeout);
+      console.error(">>> TCP: Erro no socket:", err.message);
       reject(err);
     });
 
     socket.on('end', () => {
+      clearTimeout(timeout);
       const pcmData = Buffer.concat(chunks);
-      // O Piper retorna PCM bruto. Precisamos de um cabeçalho WAV para o navegador.
+      console.log(`>>> TCP: Processamento concluído. Bytes de áudio: ${pcmData.length}`);
+      
+      if (pcmData.length === 0) {
+        return reject(new Error("Nenhum dado de áudio recebido do Piper"));
+      }
+
       const wavHeader = Buffer.alloc(44);
       wavHeader.write('RIFF', 0);
       wavHeader.writeUInt32LE(pcmData.length + 36, 4);
       wavHeader.write('WAVE', 8);
       wavHeader.write('fmt ', 12);
       wavHeader.writeUInt32LE(16, 16);
-      wavHeader.writeUInt16LE(1, 20); // PCM
-      wavHeader.writeUInt16LE(1, 22); // Mono
-      wavHeader.writeUInt32LE(22050, 24); // Sample Rate
-      wavHeader.writeUInt32LE(22050 * 2, 28); // Byte Rate
-      wavHeader.writeUInt16LE(2, 32); // Block Align
-      wavHeader.writeUInt16LE(16, 34); // Bits per sample
+      wavHeader.writeUInt16LE(1, 20);
+      wavHeader.writeUInt16LE(1, 22);
+      wavHeader.writeUInt32LE(22050, 24);
+      wavHeader.writeUInt32LE(22050 * 2, 28);
+      wavHeader.writeUInt16LE(2, 32);
+      wavHeader.writeUInt16LE(16, 34);
       wavHeader.write('data', 36);
       wavHeader.writeUInt32LE(pcmData.length, 40);
 
@@ -144,7 +162,6 @@ export async function POST(req: Request) {
 
     const piperTtsUrl = process.env.PIPER_TTS_URL;
     if (piperTtsUrl) {
-      // SE FOR PROTOCOLO WYOMING (TCP)
       if (piperTtsUrl.startsWith("tcp://")) {
         const url = new URL(piperTtsUrl);
         const host = url.hostname;
@@ -158,13 +175,12 @@ export async function POST(req: Request) {
               "Content-Length": audioBuffer.byteLength.toString(),
             },
           });
-        } catch (err) {
-          console.error(">>> Erro Wyoming TCP:", err);
-          return NextResponse.json({ error: "Erro na conexão TCP com Piper" }, { status: 502 });
+        } catch (err: any) {
+          console.error(">>> ERRO PIPER TCP:", err.message);
+          return NextResponse.json({ error: `Erro Piper: ${err.message}` }, { status: 502 });
         }
       }
 
-      // SE FOR PROTOCOLO HTTP (ANTIGO)
       const finalUrl = piperTtsUrl.includes("?text=") 
         ? `${piperTtsUrl}${encodeURIComponent(normalizedText)}`
         : piperTtsUrl;
@@ -178,15 +194,13 @@ export async function POST(req: Request) {
       });
 
       if (!response.ok) {
-        const errorDetail = await response.text();
-        console.error("Erro Piper TTS:", errorDetail);
-        return NextResponse.json({ error: "Erro no Piper TTS" }, { status: response.status });
+        return NextResponse.json({ error: "Erro no Piper HTTP" }, { status: response.status });
       }
 
       const audioBuffer = await response.arrayBuffer();
       const contentType = response.headers.get("content-type") ?? "audio/wav";
 
-      return new NextResponse(audioBuffer, {
+      return new NextResponse(new Uint8Array(audioBuffer), {
         headers: {
           "Content-Type": contentType,
           "Content-Length": audioBuffer.byteLength.toString(),
@@ -197,7 +211,6 @@ export async function POST(req: Request) {
     const apiKey = process.env.ELEVENLABS_API_KEY;
 
     if (!apiKey) {
-      console.error("ERRO: PIPER_TTS_URL e ELEVENLABS_API_KEY não configurados.");
       return NextResponse.json({ error: "Nenhum provedor de TTS configurado" }, { status: 500 });
     }
 
@@ -218,14 +231,12 @@ export async function POST(req: Request) {
     });
 
     if (!response.ok) {
-      const errorDetail = await response.json();
-      console.error("Erro ElevenLabs:", errorDetail);
       return NextResponse.json({ error: "Erro na ElevenLabs" }, { status: response.status });
     }
 
     const audioBuffer = await response.arrayBuffer();
 
-    return new NextResponse(audioBuffer, {
+    return new NextResponse(new Uint8Array(audioBuffer), {
       headers: {
         "Content-Type": "audio/mpeg",
         "Content-Length": audioBuffer.byteLength.toString(),

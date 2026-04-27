@@ -61,12 +61,17 @@ export async function POST(req: Request) {
 
     const piperTtsUrl = process.env.PIPER_TTS_URL;
     if (piperTtsUrl) {
-      const response = await fetch(piperTtsUrl, {
-        method: "POST",
-        headers: {
+      // Suporte para kroese/piper-http e similares que podem usar query params
+      const finalUrl = piperTtsUrl.includes("?text=") 
+        ? `${piperTtsUrl}${encodeURIComponent(normalizedText)}`
+        : piperTtsUrl;
+
+      const response = await fetch(finalUrl, {
+        method: piperTtsUrl.includes("?text=") ? "GET" : "POST",
+        headers: !piperTtsUrl.includes("?text=") ? {
           "Content-Type": "text/plain; charset=utf-8",
-        },
-        body: normalizedText,
+        } : {},
+        body: piperTtsUrl.includes("?text=") ? null : normalizedText,
       });
 
       if (!response.ok) {

@@ -23,6 +23,12 @@ const ZERO_METRICS: AudioMetrics = {
   dominantBand: 'mid',
 }
 
+const revokeAudioUrl = (url?: string | null) => {
+  if (url?.startsWith('blob:')) {
+    URL.revokeObjectURL(url)
+  }
+}
+
 export const useVoice = () => {
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [audioMetrics, setAudioMetrics] = useState<AudioMetrics>(ZERO_METRICS)
@@ -85,9 +91,7 @@ export const useVoice = () => {
     audio.pause()
     audio.currentTime = 0
     const url = remoteAudioUrlRef.current || audio.src
-    if (url.startsWith('blob:')) {
-      URL.revokeObjectURL(url)
-    }
+    revokeAudioUrl(url)
     remoteAudioRef.current = null
     remoteAudioUrlRef.current = null
     audioMetricsRef.current = ZERO_METRICS
@@ -259,6 +263,7 @@ export const useVoice = () => {
         }
         audio.onended = () => {
           setIsSpeaking(false)
+          revokeAudioUrl(remoteAudioUrlRef.current || audio?.src)
           if (remoteAudioRef.current === audio) {
             remoteAudioRef.current = null
             remoteAudioUrlRef.current = null

@@ -38,24 +38,47 @@ interface WyomingHeader {
   payload_length: number | null;
 }
 
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : "Erro interno no provedor de voz";
+
+const DEBUG_TTS = process.env.DEBUG_TTS === "true";
+const logTts = (...args: unknown[]) => {
+  if (DEBUG_TTS) console.log(...args);
+};
+
 async function getWyomingAudio(text: string, host: string, port: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    console.log(`>>> TCP: Tentando conectar em ${host}:${port}...`);
+    logTts(`>>> TCP: Tentando conectar em ${host}:${port}...`);
     const socket = net.connect(port, host);
-    let chunks: Buffer[] = [];
+    const chunks: Buffer[] = [];
     let state: 'header' | 'payload' = 'header';
     let currentHeader: WyomingHeader | null = null;
     let buffer = Buffer.alloc(0);
+    let settled = false;
+
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.destroy();
+      reject(error);
+    };
+
+    const finish = (audioBuffer: Buffer) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(audioBuffer);
+    };
 
     // Aumentado para 60s para permitir download inicial da voz se necessário
     const timeout = setTimeout(() => {
       console.error(`>>> TCP: Timeout atingido após 60s. Dados recebidos até agora: ${chunks.length} chunks`);
-      socket.destroy();
-      reject(new Error("Timeout de 60s (Piper demorou a responder)"));
+      fail(new Error("Timeout de 60s (Piper demorou a responder)"));
     }, 60000);
 
     socket.on('connect', () => {
-      console.log(">>> TCP: Conectado. Enviando synthesize...");
+      logTts(">>> TCP: Conectado. Enviando synthesize...");
       // Enviando JSON compacto (sem espaços) que é o padrão Wyoming
       const msg = JSON.stringify({
         name: 'synthesize',
@@ -79,7 +102,7 @@ async function getWyomingAudio(text: string, host: string, port: number): Promis
           
           try {
             currentHeader = JSON.parse(headerStr);
-            console.log(`>>> TCP: Evento recebido: ${currentHeader?.name}`);
+            logTts(`>>> TCP: Evento recebido: ${currentHeader?.name}`);
             
             if (currentHeader?.payload_length) {
               state = 'payload';
@@ -87,10 +110,9 @@ async function getWyomingAudio(text: string, host: string, port: number): Promis
               socket.end();
               return;
             }
-          } catch (e) {
+          } catch {
             console.error(">>> TCP: Falha ao processar cabeçalho:", headerStr);
-            socket.destroy();
-            return reject(new Error("Protocolo Wyoming inválido"));
+            return fail(new Error("Protocolo Wyoming inválido"));
           }
         } else {
           if (!currentHeader || currentHeader.payload_length === null || buffer.length < currentHeader.payload_length) break;
@@ -107,17 +129,15 @@ async function getWyomingAudio(text: string, host: string, port: number): Promis
     });
 
     socket.on('error', (err) => {
-      clearTimeout(timeout);
       console.error(">>> TCP Erro:", err.message);
-      reject(err);
+      fail(err);
     });
 
     socket.on('end', () => {
-      clearTimeout(timeout);
       const pcmData = Buffer.concat(chunks);
-      console.log(`>>> TCP: Concluído. Total de áudio: ${pcmData.length} bytes.`);
+      logTts(`>>> TCP: Concluído. Total de áudio: ${pcmData.length} bytes.`);
       
-      if (pcmData.length === 0) return reject(new Error("Piper retornou áudio vazio"));
+      if (pcmData.length === 0) return fail(new Error("Piper retornou áudio vazio"));
 
       const wavHeader = Buffer.alloc(44);
       wavHeader.write('RIFF', 0);
@@ -134,7 +154,7 @@ async function getWyomingAudio(text: string, host: string, port: number): Promis
       wavHeader.write('data', 36);
       wavHeader.writeUInt32LE(pcmData.length, 40);
 
-      resolve(Buffer.concat([wavHeader, pcmData]));
+      finish(Buffer.concat([wavHeader, pcmData]));
     });
   });
 }
@@ -144,6 +164,10 @@ export async function POST(req: Request) {
     const { text } = await req.json();
     const normalizedText = normalizeForSpeech(String(text ?? ""));
     const piperTtsUrl = process.env.PIPER_TTS_URL;
+
+    if (!normalizedText) {
+      return NextResponse.json({ error: "Texto vazio" }, { status: 400 });
+    }
 
     if (piperTtsUrl?.startsWith("tcp://")) {
       const url = new URL(piperTtsUrl);
@@ -155,9 +179,10 @@ export async function POST(req: Request) {
         return new NextResponse(new Uint8Array(audioBuffer), {
           headers: { "Content-Type": "audio/wav" }
         });
-      } catch (err: any) {
-        console.error(">>> ERRO NO PIPER:", err.message);
-        return NextResponse.json({ error: err.message }, { status: 502 });
+      } catch (err: unknown) {
+        const message = getErrorMessage(err);
+        console.error(">>> ERRO NO PIPER:", message);
+        return NextResponse.json({ error: message }, { status: 502 });
       }
     }
 
@@ -174,11 +199,20 @@ export async function POST(req: Request) {
       }),
     });
 
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => "");
+      console.error(">>> ERRO ELEVENLABS:", res.status, errorText);
+      return NextResponse.json(
+        { error: "Falha no provedor ElevenLabs" },
+        { status: res.status }
+      );
+    }
+
     const audioBuffer = await res.arrayBuffer();
     return new NextResponse(new Uint8Array(audioBuffer), {
       headers: { "Content-Type": "audio/mpeg" }
     });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
   }
 }

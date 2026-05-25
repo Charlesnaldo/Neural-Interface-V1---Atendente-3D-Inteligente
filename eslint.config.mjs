@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "Zord-vision/venv/**",
+    "Zord-vision/__pycache__/**",
+    "Zord-vision/**/*.py[cod]",
   ]),
 ]);
 

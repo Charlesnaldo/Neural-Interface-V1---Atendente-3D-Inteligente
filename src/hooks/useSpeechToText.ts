@@ -59,6 +59,16 @@ export const useSpeechToText = (
   const isActiveRef = useRef(false)
   const isSpeakingRef = useRef(isSpeaking)
   const lastBargeInAtRef = useRef(0)
+  const onFinalTranscriptRef = useRef(onFinalTranscript)
+  const onBargeInRef = useRef(onBargeIn)
+
+  useEffect(() => {
+    onFinalTranscriptRef.current = onFinalTranscript
+  }, [onFinalTranscript])
+
+  useEffect(() => {
+    onBargeInRef.current = onBargeIn
+  }, [onBargeIn])
 
   const handleResult = useCallback((event: SpeechRecognitionEventLike) => {
     const lastIndex = event.results.length - 1
@@ -68,15 +78,16 @@ export const useSpeechToText = (
     const transcript = result?.transcript?.trim()
     if (transcript) {
       const confidence = result?.confidence ?? 0
-      const allowBargeIn = isSpeakingRef.current && onBargeIn && confidence >= 0.55 && Date.now() - lastBargeInAtRef.current > 1200
-      if (allowBargeIn) {
+      const bargeInHandler = onBargeInRef.current
+      const canBargeIn = Boolean(bargeInHandler) && isSpeakingRef.current && confidence >= 0.55 && Date.now() - lastBargeInAtRef.current > 1200
+      if (canBargeIn && bargeInHandler) {
         lastBargeInAtRef.current = Date.now()
-        onBargeIn(transcript)
+        bargeInHandler(transcript)
         return
       }
-      onFinalTranscript(transcript)
+      onFinalTranscriptRef.current(transcript)
     }
-  }, [onBargeIn, onFinalTranscript])
+  }, [])
 
   const stopListening = useCallback(() => {
     isListeningRef.current = false

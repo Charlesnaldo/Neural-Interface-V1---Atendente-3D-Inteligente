@@ -1,6 +1,7 @@
 'use client'
-import React, { useEffect } from 'react'
-import { Profile } from '@/data/profiles'
+import { useEffect } from 'react'
+import Image from 'next/image'
+import type { Profile } from '@/data/profiles'
 
 interface ProfileCardProps {
   profile: Profile
@@ -19,9 +20,11 @@ export const ProfileCard = ({ profile, onClose }: ProfileCardProps) => {
         <div className="absolute -inset-2 bg-gradient-to-r from-orange-500/40 to-red-500/20 rounded-3xl blur-3xl opacity-60 group-hover:opacity-100" />
         <div className="relative bg-neutral-900/90 backdrop-blur-3xl rounded-3xl border border-white/10 shadow-[25px_25px_60px_rgba(0,0,0,0.75)] flex flex-col gap-4 p-5 w-64">
           <div className="relative w-full h-48 overflow-hidden rounded-2xl border border-white/10">
-            <img
+            <Image
               src={profile.photo}
               alt={profile.name}
+              fill
+              sizes="256px"
               className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
             />
           </div>
@@ -31,6 +34,7 @@ export const ProfileCard = ({ profile, onClose }: ProfileCardProps) => {
             <p className="text-white/70 text-[11px] leading-relaxed">{profile.description}</p>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="text-white/50 hover:text-white text-[10px] font-bold tracking-[0.5em] uppercase transition-colors"
           >

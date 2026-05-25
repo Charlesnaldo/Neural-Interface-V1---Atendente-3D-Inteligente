@@ -29,6 +29,12 @@ export function useVision({ onSpeak, videoRef }: UseVisionProps) {
   const socketRef = useRef<WebSocket | null>(null)
   const orbitalCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const scanCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const onSpeakRef = useRef(onSpeak)
+  const cameraReadyRef = useRef(false)
+
+  useEffect(() => {
+    onSpeakRef.current = onSpeak
+  }, [onSpeak])
 
   const setOfflineState = useCallback(() => {
     setVisionStatus('offline')
@@ -37,14 +43,32 @@ export function useVision({ onSpeak, videoRef }: UseVisionProps) {
   }, [])
 
   useEffect(() => {
+    let cameraStream: MediaStream | null = null
+    let attachedVideo: HTMLVideoElement | null = null
+    let disposed = false
+
     navigator.mediaDevices
       .getUserMedia({ video: { width: 640, height: 480 } })
       .then(stream => {
+        if (disposed) {
+          stream.getTracks().forEach(track => track.stop())
+          return
+        }
+        cameraStream = stream
+        cameraReadyRef.current = true
         if (videoRef.current) {
-          videoRef.current.srcObject = stream
+          attachedVideo = videoRef.current
+          attachedVideo.srcObject = stream
+        }
+        if (socketRef.current?.readyState === WebSocket.OPEN) {
+          setVisionStatus('online')
         }
       })
-      .catch(err => console.error('Erro na camera:', err))
+      .catch(err => {
+        cameraReadyRef.current = false
+        console.error('Erro na camera:', err)
+        setOfflineState()
+      })
 
     if (!orbitalCanvasRef.current) {
       orbitalCanvasRef.current = document.createElement('canvas')
@@ -65,10 +89,14 @@ export function useVision({ onSpeak, videoRef }: UseVisionProps) {
       socketRef.current = socket
 
       socket.onopen = () => {
-        setVisionStatus('online')
+        if (disposed) return
+        if (cameraReadyRef.current) {
+          setVisionStatus('online')
+        }
       }
 
       socket.onmessage = (event) => {
+        if (disposed) return
         try {
           const data: VisionTrackingPayload & VisionDescriptionPayload = JSON.parse(event.data)
 
@@ -81,7 +109,7 @@ export function useVision({ onSpeak, videoRef }: UseVisionProps) {
 
           if (data.type === 'description') {
             setIsVisionLoading(false)
-            if (data.text) onSpeak(data.text)
+            if (data.text) onSpeakRef.current(data.text)
             setRecognizedFace(data.recognized ?? null)
           }
         } catch (err) {
@@ -91,11 +119,13 @@ export function useVision({ onSpeak, videoRef }: UseVisionProps) {
       }
 
       socket.onerror = (err) => {
+        if (disposed) return
         console.error('Erro no socket de visao:', err)
         setOfflineState()
       }
 
       socket.onclose = () => {
+        if (disposed) return
         setOfflineState()
       }
     } catch (error) {
@@ -107,7 +137,7 @@ export function useVision({ onSpeak, videoRef }: UseVisionProps) {
       const socket = socketRef.current
       const video = videoRef.current
       const orbitalCanvas = orbitalCanvasRef.current
-      if (!video || !orbitalCanvas || socket?.readyState !== WebSocket.OPEN) {
+      if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !orbitalCanvas || socket?.readyState !== WebSocket.OPEN) {
         return
       }
 
@@ -119,32 +149,41 @@ export function useVision({ onSpeak, videoRef }: UseVisionProps) {
     }, 200)
 
     return () => {
+      disposed = true
       window.clearInterval(interval)
       socketRef.current?.close()
+      cameraReadyRef.current = false
+      cameraStream?.getTracks().forEach(track => track.stop())
+      if (attachedVideo) {
+        attachedVideo.srcObject = null
+      }
     }
-  }, [onSpeak, setOfflineState, videoRef])
+  }, [setOfflineState, videoRef])
 
   const triggerDescription = useCallback(() => {
     const socket = socketRef.current
     const video = videoRef.current
     const scanCanvas = scanCanvasRef.current
 
-    if (video && scanCanvas && socket?.readyState === WebSocket.OPEN) {
+    if (video && scanCanvas && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && socket?.readyState === WebSocket.OPEN) {
       setIsVisionLoading(true)
-      onSpeak('Iniciando varredura optica.')
 
       const ctx = scanCanvas.getContext('2d', { willReadFrequently: true })
-      if (!ctx) return
+      if (!ctx) {
+        setIsVisionLoading(false)
+        return false
+      }
 
       ctx.drawImage(video, 0, 0, 640, 480)
       const fullFrame = scanCanvas.toDataURL('image/jpeg', 0.5)
       socket.send(`DESCRIBE:${fullFrame}`)
-      return
+      return true
     }
 
     console.warn('Visao indisponivel para varredura.')
-    onSpeak('Sistemas visuais offline.')
-  }, [onSpeak, videoRef])
+    setIsVisionLoading(false)
+    return false
+  }, [videoRef])
 
   return {
     faceCoords,

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useRef } from 'react'
+import { useRef } from 'react'
 import { useGLTF } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
@@ -8,7 +8,7 @@ import * as THREE from 'three'
 export default function CreatorModel() {
     const group = useRef<THREE.Group>(null)
     // Carrega o modelo 3D do criador
-    const { scene } = useGLTF('/models/facecap1.glb')
+    const { scene } = useGLTF('/models/facecap.glb')
 
     useFrame((state) => {
         if (group.current) {
@@ -30,4 +30,4 @@ export default function CreatorModel() {
     )
 }
 
-useGLTF.preload('/models/facecap1.glb')
+useGLTF.preload('/models/facecap.glb')

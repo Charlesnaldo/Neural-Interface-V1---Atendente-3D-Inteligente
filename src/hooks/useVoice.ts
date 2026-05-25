@@ -12,6 +12,12 @@ interface AudioMetrics {
   mid: number
   high: number
   dominantBand: DominantBand
+  mouthOpen: number
+  mouthWide: number
+  mouthRound: number
+  mouthClosed: number
+  mouthPress: number
+  mouthDental: number
 }
 
 interface SpeechCursor {
@@ -30,6 +36,12 @@ const ZERO_METRICS: AudioMetrics = {
   mid: 0,
   high: 0,
   dominantBand: 'mid',
+  mouthOpen: 0,
+  mouthWide: 0,
+  mouthRound: 0,
+  mouthClosed: 0,
+  mouthPress: 0,
+  mouthDental: 0,
 }
 
 const normalizeSpeechText = (text: string) => text.replace(/\s+/g, ' ').trim()
@@ -69,6 +81,29 @@ const getBandsForChar = (char: string) => {
   if ('fvszjx'.includes(char)) return { low: 0.1, mid: 0.36, high: 0.82 }
   if ('mnpbtdkgcqrl'.includes(char)) return { low: 0.44, mid: 0.54, high: 0.28 }
   return { low: 0.22, mid: 0.45, high: 0.26 }
+}
+
+const getMouthShapeForChar = (rawChar: string) => {
+  const char = simplifyChar(rawChar)
+
+  if (/[\s,.!?;:]/.test(rawChar)) {
+    return { open: 0.02, wide: 0, round: 0, closed: 0.32, press: 0.08, dental: 0 }
+  }
+
+  if (char === 'a') return { open: 0.7, wide: 0.08, round: 0, closed: 0, press: 0, dental: 0 }
+  if (char === 'e') return { open: 0.42, wide: 0.62, round: 0, closed: 0, press: 0, dental: 0.05 }
+  if (char === 'i') return { open: 0.24, wide: 0.82, round: 0, closed: 0, press: 0, dental: 0.08 }
+  if (char === 'o') return { open: 0.36, wide: 0.04, round: 0.66, closed: 0, press: 0, dental: 0 }
+  if (char === 'u') return { open: 0.22, wide: 0, round: 0.82, closed: 0, press: 0, dental: 0 }
+
+  if ('mpb'.includes(char)) return { open: 0.02, wide: 0.02, round: 0, closed: 0.9, press: 0.8, dental: 0 }
+  if ('fv'.includes(char)) return { open: 0.16, wide: 0.22, round: 0, closed: 0.08, press: 0.08, dental: 0.82 }
+  if ('szxj'.includes(char)) return { open: 0.12, wide: 0.52, round: 0.02, closed: 0.08, press: 0.12, dental: 0.28 }
+  if ('tdnl'.includes(char)) return { open: 0.18, wide: 0.26, round: 0, closed: 0.18, press: 0.22, dental: 0.34 }
+  if ('kgcq'.includes(char)) return { open: 0.24, wide: 0.16, round: 0.08, closed: 0.1, press: 0.16, dental: 0.08 }
+  if ('rhyw'.includes(char)) return { open: 0.2, wide: 0.22, round: char === 'w' ? 0.48 : 0.06, closed: 0.04, press: 0.04, dental: 0.04 }
+
+  return { open: 0.2, wide: 0.22, round: 0.04, closed: 0.04, press: 0.04, dental: 0.04 }
 }
 
 const getDominantBand = (low: number, mid: number, high: number): DominantBand => {
@@ -164,12 +199,20 @@ export const useVoice = () => {
       const phrasePulse = 0.5 + Math.sin(phase * 0.42) * 0.5
       const fade = THREE.MathUtils.clamp(Math.min(progress / 0.06, (1 - progress) / 0.08), 0, 1)
       const bands = getBandsForChar(char)
+      const mouthShape = getMouthShapeForChar(rawChar)
 
       const amplitudeTarget = THREE.MathUtils.clamp(
         (isPause ? 0.08 : 0.16 + syllablePulse * 0.64 + phrasePulse * 0.08) * fade,
         0,
         1
       )
+      const articulation = THREE.MathUtils.clamp((isPause ? 0.18 : 0.38 + amplitudeTarget * 0.8) * fade, 0, 1)
+      const openTarget = THREE.MathUtils.clamp(mouthShape.open * articulation, 0, 0.76)
+      const wideTarget = THREE.MathUtils.clamp(mouthShape.wide * articulation, 0, 0.86)
+      const roundTarget = THREE.MathUtils.clamp(mouthShape.round * articulation, 0, 0.86)
+      const closedTarget = THREE.MathUtils.clamp(mouthShape.closed * fade, 0, 0.9)
+      const pressTarget = THREE.MathUtils.clamp(mouthShape.press * fade, 0, 0.84)
+      const dentalTarget = THREE.MathUtils.clamp(mouthShape.dental * articulation, 0, 0.86)
       const low = THREE.MathUtils.clamp(bands.low * amplitudeTarget + 0.02, 0, 1)
       const mid = THREE.MathUtils.clamp(bands.mid * amplitudeTarget + 0.03, 0, 1)
       const high = THREE.MathUtils.clamp(bands.high * amplitudeTarget + 0.015, 0, 1)
@@ -183,6 +226,12 @@ export const useVoice = () => {
         mid: smoothValue(audioMetricsRef.current.mid, mid, 0.34, 0.12),
         high: smoothValue(audioMetricsRef.current.high, high, 0.36, 0.12),
         dominantBand: getDominantBand(low, mid, high),
+        mouthOpen: smoothValue(audioMetricsRef.current.mouthOpen, openTarget, 0.54, 0.18),
+        mouthWide: smoothValue(audioMetricsRef.current.mouthWide, wideTarget, 0.42, 0.16),
+        mouthRound: smoothValue(audioMetricsRef.current.mouthRound, roundTarget, 0.48, 0.18),
+        mouthClosed: smoothValue(audioMetricsRef.current.mouthClosed, closedTarget, 0.62, 0.28),
+        mouthPress: smoothValue(audioMetricsRef.current.mouthPress, pressTarget, 0.58, 0.26),
+        mouthDental: smoothValue(audioMetricsRef.current.mouthDental, dentalTarget, 0.46, 0.18),
       }
 
       setAudioMetrics(audioMetricsRef.current)

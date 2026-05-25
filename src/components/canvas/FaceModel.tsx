@@ -23,6 +23,12 @@ interface FaceModelProps {
     mid: number
     high: number
     dominantBand: 'low' | 'mid' | 'high'
+    mouthOpen: number
+    mouthWide: number
+    mouthRound: number
+    mouthClosed: number
+    mouthPress: number
+    mouthDental: number
   }
 }
 
@@ -83,11 +89,12 @@ export default function FaceModel({ isSpeaking, isListening, loading, faceCoords
     timer: 4,
   })
   const visemeState = useRef({
-    aa: 0,
-    e: 0,
-    oo: 0,
-    fv: 0,
-    mbp: 0,
+    open: 0,
+    wide: 0,
+    round: 0,
+    closed: 0,
+    press: 0,
+    dental: 0,
   })
   const expressionState = useRef({
     smile: 0.3,
@@ -128,7 +135,20 @@ export default function FaceModel({ isSpeaking, isListening, loading, faceCoords
     const delta = Math.min(0.06, state.clock.getDelta())
     const fx = faceCoords?.x ?? 0.5
     const fy = faceCoords?.y ?? 0.5
-    const metrics = audioMetricsRef.current ?? { amplitude: 0, sharpness: 0, low: 0, mid: 0, high: 0, dominantBand: 'mid' as const }
+    const metrics = audioMetricsRef.current ?? {
+      amplitude: 0,
+      sharpness: 0,
+      low: 0,
+      mid: 0,
+      high: 0,
+      dominantBand: 'mid' as const,
+      mouthOpen: 0,
+      mouthWide: 0,
+      mouthRound: 0,
+      mouthClosed: 0,
+      mouthPress: 0,
+      mouthDental: 0,
+    }
     const voiceEnergy = isSpeaking ? THREE.MathUtils.clamp(0.24 + metrics.amplitude * 0.64, 0, 1) : 0
     const voiceSharpness = isSpeaking ? THREE.MathUtils.clamp(metrics.sharpness * 1.18, 0, 1) : 0
     const speechPulse = isSpeaking ? Math.abs(Math.sin(t * (7.2 + metrics.high * 3.4))) : 0
@@ -288,7 +308,7 @@ export default function FaceModel({ isSpeaking, isListening, loading, faceCoords
       expressionState.current.browFocus = THREE.MathUtils.damp(expressionState.current.browFocus, targetBrowFocus, 0.16, delta * 60)
       expressionState.current.cheek = THREE.MathUtils.damp(expressionState.current.cheek, targetCheek, 0.16, delta * 60)
 
-      const finalSmile = expressionState.current.smile + (isSpeaking ? voiceEnergy * 0.05 : 0)
+      const finalSmile = expressionState.current.smile * (isSpeaking ? 0.86 : 1) + (isSpeaking ? voiceEnergy * 0.025 : 0)
       const finalFrown = expressionState.current.frown
 
       if (dict['mouthSmile_L'] !== undefined) influences[dict['mouthSmile_L']] = THREE.MathUtils.lerp(influences[dict['mouthSmile_L']], finalSmile, 0.1)
@@ -303,66 +323,71 @@ export default function FaceModel({ isSpeaking, isListening, loading, faceCoords
       if (dict['cheekSquint_R'] !== undefined) influences[dict['cheekSquint_R']] = THREE.MathUtils.lerp(influences[dict['cheekSquint_R']], targetSquint * 0.8, 0.1)
 
       const viseme = visemeState.current
-      const plosivePulse = isSpeaking ? Math.max(0, Math.sin(t * 10.5 + metrics.low * 7)) * (1 - metrics.amplitude * 0.38) : 0
-      const openVowelBoost = metrics.dominantBand === 'mid' ? 0.12 : metrics.dominantBand === 'low' ? 0.04 : 0
-      const aaTarget = isSpeaking ? THREE.MathUtils.clamp(voiceEnergy * 0.9 + metrics.mid * 0.54 + speechPulse * 0.12 + openVowelBoost, 0, 1) : 0
-      const eTarget = isSpeaking ? THREE.MathUtils.clamp(metrics.high * 0.7 + (1 - metrics.low) * 0.14, 0, 0.82) : 0
-      const ooTarget = isSpeaking ? THREE.MathUtils.clamp(metrics.low * 0.68 + voiceEnergy * 0.22, 0, 0.76) : 0
-      const fvTarget = isSpeaking ? THREE.MathUtils.clamp(metrics.high * 0.58 + voiceSharpness * 0.34, 0, 0.7) : 0
-      const mbpTarget = isSpeaking ? THREE.MathUtils.clamp(plosivePulse * (0.82 + metrics.low * 0.3), 0, 0.95) : 0.04
+      const openTarget = isSpeaking
+        ? THREE.MathUtils.clamp(metrics.mouthOpen + speechPulse * metrics.amplitude * 0.045, 0, 0.72)
+        : 0
+      const wideTarget = isSpeaking ? THREE.MathUtils.clamp(metrics.mouthWide, 0, 0.82) : 0
+      const roundTarget = isSpeaking ? THREE.MathUtils.clamp(metrics.mouthRound, 0, 0.82) : 0
+      const closedTarget = isSpeaking ? THREE.MathUtils.clamp(metrics.mouthClosed, 0, 0.9) : 0.08
+      const pressTarget = isSpeaking ? THREE.MathUtils.clamp(metrics.mouthPress, 0, 0.84) : 0.02
+      const dentalTarget = isSpeaking ? THREE.MathUtils.clamp(metrics.mouthDental, 0, 0.82) : 0
 
-      viseme.aa = THREE.MathUtils.damp(viseme.aa, aaTarget, 0.16, delta * 60)
-      viseme.e = THREE.MathUtils.damp(viseme.e, eTarget, 0.16, delta * 60)
-      viseme.oo = THREE.MathUtils.damp(viseme.oo, ooTarget, 0.16, delta * 60)
-      viseme.fv = THREE.MathUtils.damp(viseme.fv, fvTarget, 0.16, delta * 60)
-      viseme.mbp = THREE.MathUtils.damp(viseme.mbp, mbpTarget, 0.2, delta * 60)
+      viseme.open = THREE.MathUtils.damp(viseme.open, openTarget, 0.24, delta * 60)
+      viseme.wide = THREE.MathUtils.damp(viseme.wide, wideTarget, 0.2, delta * 60)
+      viseme.round = THREE.MathUtils.damp(viseme.round, roundTarget, 0.22, delta * 60)
+      viseme.closed = THREE.MathUtils.damp(viseme.closed, closedTarget, 0.34, delta * 60)
+      viseme.press = THREE.MathUtils.damp(viseme.press, pressTarget, 0.3, delta * 60)
+      viseme.dental = THREE.MathUtils.damp(viseme.dental, dentalTarget, 0.22, delta * 60)
 
       if (dict['jawOpen'] !== undefined) {
         const targetJaw = isSpeaking
-          ? THREE.MathUtils.clamp(0.035 + viseme.aa * 0.76 + viseme.oo * 0.1 + speechPulse * 0.1 - viseme.mbp * 0.06, 0, 1)
+          ? THREE.MathUtils.clamp(0.018 + viseme.open * 0.54 + viseme.round * 0.08 - viseme.closed * 0.24, 0.01, 0.58)
           : 0.01
-        influences[dict['jawOpen']] = THREE.MathUtils.lerp(influences[dict['jawOpen']], targetJaw, 0.34)
+        influences[dict['jawOpen']] = THREE.MathUtils.lerp(influences[dict['jawOpen']], targetJaw, 0.24)
       }
       if (dict['mouthClose'] !== undefined) {
-        const target = isSpeaking ? viseme.mbp * 0.26 : 0.16
-        influences[dict['mouthClose']] = THREE.MathUtils.lerp(influences[dict['mouthClose']], target, 0.11)
+        const target = isSpeaking
+          ? THREE.MathUtils.clamp(0.04 + viseme.closed * 0.76 + viseme.press * 0.18 - viseme.open * 0.18, 0, 0.86)
+          : 0.14
+        influences[dict['mouthClose']] = THREE.MathUtils.lerp(influences[dict['mouthClose']], target, 0.18)
       }
       if (dict['mouthPress_L'] !== undefined) {
-        influences[dict['mouthPress_L']] = THREE.MathUtils.lerp(influences[dict['mouthPress_L']], viseme.mbp * 0.55, 0.2)
+        influences[dict['mouthPress_L']] = THREE.MathUtils.lerp(influences[dict['mouthPress_L']], viseme.press * 0.58 + viseme.closed * 0.18, 0.22)
       }
       if (dict['mouthPress_R'] !== undefined) {
-        influences[dict['mouthPress_R']] = THREE.MathUtils.lerp(influences[dict['mouthPress_R']], viseme.mbp * 0.55, 0.2)
+        influences[dict['mouthPress_R']] = THREE.MathUtils.lerp(influences[dict['mouthPress_R']], viseme.press * 0.58 + viseme.closed * 0.18, 0.22)
       }
       if (dict['mouthFunnel'] !== undefined) {
         const target = isSpeaking
-          ? THREE.MathUtils.clamp(viseme.oo * 0.94 + viseme.fv * 0.14, 0, 0.9)
+          ? THREE.MathUtils.clamp(viseme.round * 0.66 + viseme.dental * 0.08, 0, 0.68)
           : 0
         influences[dict['mouthFunnel']] = THREE.MathUtils.lerp(influences[dict['mouthFunnel']], target, 0.12)
       }
       if (dict['mouthPucker'] !== undefined) {
         const target = isSpeaking
-          ? THREE.MathUtils.clamp(viseme.oo * 0.78 + viseme.fv * 0.14, 0, 0.76)
+          ? THREE.MathUtils.clamp(viseme.round * 0.72 + viseme.dental * 0.06, 0, 0.72)
           : 0
         influences[dict['mouthPucker']] = THREE.MathUtils.lerp(influences[dict['mouthPucker']], target, 0.1)
       }
       if (dict['mouthStretch_L'] !== undefined) {
         const target = isSpeaking
-          ? THREE.MathUtils.clamp(viseme.e * 0.8 + voiceEnergy * 0.2, 0, 1)
+          ? THREE.MathUtils.clamp(viseme.wide * 0.62 + viseme.open * 0.08, 0, 0.76)
           : 0
         influences[dict['mouthStretch_L']] = THREE.MathUtils.lerp(influences[dict['mouthStretch_L']], target, 0.1)
       }
       if (dict['mouthStretch_R'] !== undefined) {
         const target = isSpeaking
-          ? THREE.MathUtils.clamp(viseme.e * 0.8 + voiceEnergy * 0.2, 0, 1)
+          ? THREE.MathUtils.clamp(viseme.wide * 0.62 + viseme.open * 0.08, 0, 0.76)
           : 0
         influences[dict['mouthStretch_R']] = THREE.MathUtils.lerp(influences[dict['mouthStretch_R']], target, 0.1)
       }
 
-      const upperLipTarget = isSpeaking ? 0.1 + viseme.fv * 0.26 + viseme.e * 0.12 : 0.08
+      const upperLipTarget = isSpeaking ? 0.06 + viseme.dental * 0.34 + viseme.wide * 0.08 : 0.06
       if (dict['mouthUpperUp_L'] !== undefined) influences[dict['mouthUpperUp_L']] = THREE.MathUtils.lerp(influences[dict['mouthUpperUp_L']], upperLipTarget, 0.08)
       if (dict['mouthUpperUp_R'] !== undefined) influences[dict['mouthUpperUp_R']] = THREE.MathUtils.lerp(influences[dict['mouthUpperUp_R']], upperLipTarget, 0.08)
-      if (dict['mouthLowerDown_L'] !== undefined) influences[dict['mouthLowerDown_L']] = THREE.MathUtils.lerp(influences[dict['mouthLowerDown_L']], isSpeaking ? viseme.aa * 0.62 : 0.02, 0.12)
-      if (dict['mouthLowerDown_R'] !== undefined) influences[dict['mouthLowerDown_R']] = THREE.MathUtils.lerp(influences[dict['mouthLowerDown_R']], isSpeaking ? viseme.aa * 0.62 : 0.02, 0.12)
+      const lowerLipTarget = isSpeaking ? THREE.MathUtils.clamp(viseme.open * 0.42 + viseme.round * 0.07 - viseme.closed * 0.08, 0, 0.46) : 0.02
+      if (dict['mouthLowerDown_L'] !== undefined) influences[dict['mouthLowerDown_L']] = THREE.MathUtils.lerp(influences[dict['mouthLowerDown_L']], lowerLipTarget, 0.12)
+      if (dict['mouthLowerDown_R'] !== undefined) influences[dict['mouthLowerDown_R']] = THREE.MathUtils.lerp(influences[dict['mouthLowerDown_R']], lowerLipTarget, 0.12)
 
       const browInnerTarget = Math.min(1, expressionState.current.browSad + expressionState.current.browFocus * 0.35 + (isSpeaking ? voiceEnergy * 0.1 + browTalkPulse : 0.03))
       if (dict['browInnerUp'] !== undefined) influences[dict['browInnerUp']] = THREE.MathUtils.lerp(influences[dict['browInnerUp']], browInnerTarget, 0.08)

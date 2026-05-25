@@ -20,6 +20,12 @@ export interface FaceSceneProps {
     mid: number
     high: number
     dominantBand: 'low' | 'mid' | 'high'
+    mouthOpen: number
+    mouthWide: number
+    mouthRound: number
+    mouthClosed: number
+    mouthPress: number
+    mouthDental: number
   };
 }
 

@@ -263,7 +263,7 @@ export default function AtendenteInterface() {
     }
   }, [loading, isSpeaking, speak, stop, triggerDescription, playSFX, visionReport, recognizedFace, visionStatus, showProfileMention, appendChatMessage])
 
-  const { isListening, startListening, stopListening } = useSpeechToText(
+  const { isListening, inputLevel, startListening, stopListening } = useSpeechToText(
     (text) => processMessage(text, true),
     isSpeaking,
     (text) => {
@@ -373,7 +373,15 @@ export default function AtendenteInterface() {
         )}
 
         <FaceDisplay isSpeaking={isSpeaking}>
-          <FaceScene isSpeaking={isSpeaking} loading={loading} faceCoords={faceCoords} expression={expression} audioMetrics={audioMetrics} />
+          <FaceScene
+            isSpeaking={isSpeaking}
+            isListening={isListening}
+            loading={loading}
+            faceCoords={faceCoords}
+            expression={expression}
+            audioMetrics={audioMetrics}
+            inputLevel={inputLevel}
+          />
         </FaceDisplay>
 
         <ChatControls
@@ -383,6 +391,7 @@ export default function AtendenteInterface() {
           startListening={handleMicAction}
           onStop={stop}
           isListening={isListening}
+          inputLevel={inputLevel}
           loading={loading}
           isSpeaking={isSpeaking}
         />

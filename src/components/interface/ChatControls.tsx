@@ -9,6 +9,7 @@ interface ChatControlsProps {
     startListening: () => void;
     onStop: () => void;
     isListening: boolean;
+    inputLevel: number;
     loading: boolean;
     isSpeaking: boolean;
 }
@@ -20,9 +21,12 @@ export const ChatControls = ({
     startListening,
     onStop,
     isListening,
+    inputLevel,
     loading,
     isSpeaking
 }: ChatControlsProps) => {
+    const clampedInputLevel = Math.max(0, Math.min(1, inputLevel))
+
     return (
         <footer className="w-full max-w-lg mt-12 z-20 px-4">
             <form
@@ -62,10 +66,18 @@ export const ChatControls = ({
 
                         {/* Pulso secundário apenas quando ouvindo */}
                         {isListening && (
-                            <span className="absolute inset-2 rounded-full bg-red-500/30 animate-pulse" />
+                            <span
+                                className="absolute inset-2 rounded-full bg-red-500/30 transition-transform duration-100"
+                                style={{ transform: `scale(${1 + clampedInputLevel * 0.85})`, opacity: 0.35 + clampedInputLevel * 0.55 }}
+                            />
                         )}
 
-                        <Mic size={20} strokeWidth={1.5} className={`relative z-10 transition-transform ${isListening ? '' : 'group-hover:scale-110'}`} />
+                        <Mic
+                            size={20}
+                            strokeWidth={1.5}
+                            className={`relative z-10 transition-transform ${isListening ? '' : 'group-hover:scale-110'}`}
+                            style={isListening ? { transform: `scale(${1 + clampedInputLevel * 0.28})` } : undefined}
+                        />
                     </button>
                 </div>
             </form>

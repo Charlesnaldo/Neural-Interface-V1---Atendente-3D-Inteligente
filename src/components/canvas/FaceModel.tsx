@@ -11,9 +11,11 @@ const MODEL_URL = '/models/facecap.glb'
 
 interface FaceModelProps {
   isSpeaking: boolean
+  isListening: boolean
   loading: boolean
   faceCoords: { x: number; y: number }
   expression: 'neutral' | 'smile' | 'sad'
+  inputLevel: number
   audioMetrics: {
     amplitude: number
     sharpness: number
@@ -24,7 +26,7 @@ interface FaceModelProps {
   }
 }
 
-export default function FaceModel({ isSpeaking, loading, faceCoords, expression, audioMetrics }: FaceModelProps) {
+export default function FaceModel({ isSpeaking, isListening, loading, faceCoords, expression, inputLevel, audioMetrics }: FaceModelProps) {
   const { gl } = useThree()
   const [timingSeed] = useState(() => ({
     blink: Math.random() * 3 + 2,
@@ -32,6 +34,7 @@ export default function FaceModel({ isSpeaking, loading, faceCoords, expression,
     saccade: Math.random() * 2 + 0.5,
     headIdle: Math.random() * 3 + 2,
     browTimer: Math.random() * 2 + 1,
+    gestureTimer: Math.random() * 1.4 + 0.6,
     breathPhase: Math.random() * Math.PI * 2,
   }))
   const groupRef = useRef<THREE.Group>(null)
@@ -64,6 +67,15 @@ export default function FaceModel({ isSpeaking, loading, faceCoords, expression,
     timer: timingSeed.browTimer,
     drift: 0,
   })
+  const gestureMotion = useRef({
+    nod: 0,
+    nodTarget: 0,
+    tilt: 0,
+    tiltTarget: 0,
+    lean: 0,
+    leanTarget: 0,
+    timer: timingSeed.gestureTimer,
+  })
   const breathState = useRef({
     amplitude: 0.011,
     phase: timingSeed.breathPhase,
@@ -81,6 +93,8 @@ export default function FaceModel({ isSpeaking, loading, faceCoords, expression,
     smile: 0.3,
     frown: 0,
     browSad: 0,
+    browFocus: 0,
+    cheek: 0,
   })
 
   const { scene, animations } = useGLTF(MODEL_URL, undefined, undefined, (loader) => {
@@ -118,6 +132,7 @@ export default function FaceModel({ isSpeaking, loading, faceCoords, expression,
     const voiceEnergy = isSpeaking ? THREE.MathUtils.clamp(0.24 + metrics.amplitude * 0.64, 0, 1) : 0
     const voiceSharpness = isSpeaking ? THREE.MathUtils.clamp(metrics.sharpness * 1.18, 0, 1) : 0
     const speechPulse = isSpeaking ? Math.abs(Math.sin(t * (7.2 + metrics.high * 3.4))) : 0
+    const listeningEnergy = isListening && !isSpeaking ? THREE.MathUtils.clamp(inputLevel * 1.7, 0, 1) : 0
 
     const blink = blinkState.current
     blink.timer -= delta
@@ -165,19 +180,48 @@ export default function FaceModel({ isSpeaking, loading, faceCoords, expression,
     headIdleState.rotX = THREE.MathUtils.damp(headIdleState.rotX, headIdleState.targetX, 0.04, delta * 60)
     headIdleState.rotY = THREE.MathUtils.damp(headIdleState.rotY, headIdleState.targetY, 0.045, delta * 60)
 
+    const gesture = gestureMotion.current
+    gesture.timer -= delta
+    if (gesture.timer <= 0) {
+      if (isSpeaking) {
+        gesture.nodTarget = (Math.random() * 0.06 + 0.015) * voiceEnergy
+        gesture.tiltTarget = (Math.random() - 0.5) * 0.08
+        gesture.leanTarget = voiceEnergy * 0.025
+        gesture.timer = Math.random() * 0.55 + 0.28
+      } else if (isListening) {
+        gesture.nodTarget = -0.018 - listeningEnergy * 0.045
+        gesture.tiltTarget = (Math.random() - 0.5) * 0.045
+        gesture.leanTarget = 0.035 + listeningEnergy * 0.045
+        gesture.timer = Math.random() * 0.8 + 0.45
+      } else {
+        gesture.nodTarget = (Math.random() - 0.5) * 0.018
+        gesture.tiltTarget = (Math.random() - 0.5) * 0.026
+        gesture.leanTarget = 0
+        gesture.timer = Math.random() * 3 + 1.4
+      }
+    }
+    gesture.nod = THREE.MathUtils.damp(gesture.nod, gesture.nodTarget, 0.12, delta * 60)
+    gesture.tilt = THREE.MathUtils.damp(gesture.tilt, gesture.tiltTarget, 0.08, delta * 60)
+    gesture.lean = THREE.MathUtils.damp(gesture.lean, gesture.leanTarget, 0.08, delta * 60)
+
     if (groupRef.current) {
       const breath = Math.sin(t * 1.18 + breathState.current.phase) * breathState.current.amplitude
       const jitterX = Math.sin(t * 2.5) * 0.002
       const jitterY = Math.cos(t * 2.0) * 0.002
+      const speechNod = isSpeaking ? Math.sin(t * (4.8 + metrics.mid * 2.8)) * voiceEnergy * 0.035 : 0
+      const listeningNod = listeningEnergy > 0 ? Math.sin(t * 3.4) * listeningEnergy * 0.018 : 0
 
       const targetRotY = (fx - 0.5) * -1.0 + jitterY
       const targetRotX = (fy - 0.5) * 0.6 + jitterX + breath
       const finalRotY = targetRotY + headIdleState.rotY
-      const finalRotX = targetRotX + headIdleState.rotX
+      const finalRotX = targetRotX + headIdleState.rotX + gesture.nod + speechNod + listeningNod
+      const finalRotZ = gesture.tilt + (isSpeaking ? Math.sin(t * 2.1) * voiceEnergy * 0.016 : 0)
 
       groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, finalRotY, 0.08)
       groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, finalRotX, 0.08)
+      groupRef.current.rotation.z = THREE.MathUtils.lerp(groupRef.current.rotation.z, finalRotZ, 0.06)
       groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, breath * 0.26, 0.04)
+      groupRef.current.position.z = THREE.MathUtils.lerp(groupRef.current.position.z, gesture.lean, 0.05)
     }
 
     headMeshesRef.current.forEach((mesh) => {
@@ -225,18 +269,24 @@ export default function FaceModel({ isSpeaking, loading, faceCoords, expression,
       let targetSmile = 0.22
       let targetFrown = 0
       let targetBrowSad = 0
+      let targetBrowFocus = isListening && !isSpeaking ? 0.12 + listeningEnergy * 0.18 : 0
+      let targetCheek = isSpeaking ? voiceEnergy * 0.08 : listeningEnergy * 0.04
 
       if (expression === 'smile') {
-        targetSmile = 0.62
+        targetSmile = 0.68
+        targetCheek += 0.24
       } else if (expression === 'sad') {
-        targetSmile = 0.05
-        targetFrown = 0.42
-        targetBrowSad = 0.34
+        targetSmile = 0.03
+        targetFrown = 0.5
+        targetBrowSad = 0.42
+        targetBrowFocus = 0.08
       }
 
       expressionState.current.smile = THREE.MathUtils.damp(expressionState.current.smile, targetSmile, 0.18, delta * 60)
       expressionState.current.frown = THREE.MathUtils.damp(expressionState.current.frown, targetFrown, 0.18, delta * 60)
       expressionState.current.browSad = THREE.MathUtils.damp(expressionState.current.browSad, targetBrowSad, 0.18, delta * 60)
+      expressionState.current.browFocus = THREE.MathUtils.damp(expressionState.current.browFocus, targetBrowFocus, 0.16, delta * 60)
+      expressionState.current.cheek = THREE.MathUtils.damp(expressionState.current.cheek, targetCheek, 0.16, delta * 60)
 
       const finalSmile = expressionState.current.smile + (isSpeaking ? voiceEnergy * 0.05 : 0)
       const finalFrown = expressionState.current.frown
@@ -246,19 +296,20 @@ export default function FaceModel({ isSpeaking, loading, faceCoords, expression,
       if (dict['mouthFrown_L'] !== undefined) influences[dict['mouthFrown_L']] = THREE.MathUtils.lerp(influences[dict['mouthFrown_L']], finalFrown, 0.1)
       if (dict['mouthFrown_R'] !== undefined) influences[dict['mouthFrown_R']] = THREE.MathUtils.lerp(influences[dict['mouthFrown_R']], finalFrown, 0.1)
 
-      const targetSquint = finalSmile * 0.28 + (isSpeaking ? voiceSharpness * 0.146 : 0)
+      const targetSquint = finalSmile * 0.25 + expressionState.current.cheek * 0.3 + listeningEnergy * 0.06 + (isSpeaking ? voiceSharpness * 0.146 : 0)
       if (dict['eyeSquint_L'] !== undefined) influences[dict['eyeSquint_L']] = THREE.MathUtils.lerp(influences[dict['eyeSquint_L']], targetSquint, 0.1)
       if (dict['eyeSquint_R'] !== undefined) influences[dict['eyeSquint_R']] = THREE.MathUtils.lerp(influences[dict['eyeSquint_R']], targetSquint, 0.1)
       if (dict['cheekSquint_L'] !== undefined) influences[dict['cheekSquint_L']] = THREE.MathUtils.lerp(influences[dict['cheekSquint_L']], targetSquint * 0.8, 0.1)
       if (dict['cheekSquint_R'] !== undefined) influences[dict['cheekSquint_R']] = THREE.MathUtils.lerp(influences[dict['cheekSquint_R']], targetSquint * 0.8, 0.1)
 
       const viseme = visemeState.current
-      const plosivePulse = isSpeaking ? Math.max(0, Math.sin(t * 10.5 + metrics.low * 7)) * (1 - metrics.amplitude * 0.45) : 0
-      const aaTarget = isSpeaking ? THREE.MathUtils.clamp(voiceEnergy * 0.96 + metrics.mid * 0.46 + speechPulse * 0.14, 0, 1) : 0
-      const eTarget = isSpeaking ? THREE.MathUtils.clamp(metrics.high * 0.64 + (1 - metrics.low) * 0.16, 0, 0.78) : 0
-      const ooTarget = isSpeaking ? THREE.MathUtils.clamp(metrics.low * 0.56 + voiceEnergy * 0.24, 0, 0.7) : 0
+      const plosivePulse = isSpeaking ? Math.max(0, Math.sin(t * 10.5 + metrics.low * 7)) * (1 - metrics.amplitude * 0.38) : 0
+      const openVowelBoost = metrics.dominantBand === 'mid' ? 0.12 : metrics.dominantBand === 'low' ? 0.04 : 0
+      const aaTarget = isSpeaking ? THREE.MathUtils.clamp(voiceEnergy * 0.9 + metrics.mid * 0.54 + speechPulse * 0.12 + openVowelBoost, 0, 1) : 0
+      const eTarget = isSpeaking ? THREE.MathUtils.clamp(metrics.high * 0.7 + (1 - metrics.low) * 0.14, 0, 0.82) : 0
+      const ooTarget = isSpeaking ? THREE.MathUtils.clamp(metrics.low * 0.68 + voiceEnergy * 0.22, 0, 0.76) : 0
       const fvTarget = isSpeaking ? THREE.MathUtils.clamp(metrics.high * 0.58 + voiceSharpness * 0.34, 0, 0.7) : 0
-      const mbpTarget = isSpeaking ? THREE.MathUtils.clamp(plosivePulse * 0.96, 0, 0.95) : 0.04
+      const mbpTarget = isSpeaking ? THREE.MathUtils.clamp(plosivePulse * (0.82 + metrics.low * 0.3), 0, 0.95) : 0.04
 
       viseme.aa = THREE.MathUtils.damp(viseme.aa, aaTarget, 0.16, delta * 60)
       viseme.e = THREE.MathUtils.damp(viseme.e, eTarget, 0.16, delta * 60)
@@ -268,7 +319,7 @@ export default function FaceModel({ isSpeaking, loading, faceCoords, expression,
 
       if (dict['jawOpen'] !== undefined) {
         const targetJaw = isSpeaking
-          ? THREE.MathUtils.clamp(0.035 + viseme.aa * 0.74 + speechPulse * 0.12 - viseme.mbp * 0.05, 0, 1)
+          ? THREE.MathUtils.clamp(0.035 + viseme.aa * 0.76 + viseme.oo * 0.1 + speechPulse * 0.1 - viseme.mbp * 0.06, 0, 1)
           : 0.01
         influences[dict['jawOpen']] = THREE.MathUtils.lerp(influences[dict['jawOpen']], targetJaw, 0.34)
       }
@@ -313,13 +364,15 @@ export default function FaceModel({ isSpeaking, loading, faceCoords, expression,
       if (dict['mouthLowerDown_L'] !== undefined) influences[dict['mouthLowerDown_L']] = THREE.MathUtils.lerp(influences[dict['mouthLowerDown_L']], isSpeaking ? viseme.aa * 0.62 : 0.02, 0.12)
       if (dict['mouthLowerDown_R'] !== undefined) influences[dict['mouthLowerDown_R']] = THREE.MathUtils.lerp(influences[dict['mouthLowerDown_R']], isSpeaking ? viseme.aa * 0.62 : 0.02, 0.12)
 
-      const browInnerTarget = Math.min(1, expressionState.current.browSad + (isSpeaking ? voiceEnergy * 0.1 + browTalkPulse : 0.03))
+      const browInnerTarget = Math.min(1, expressionState.current.browSad + expressionState.current.browFocus * 0.35 + (isSpeaking ? voiceEnergy * 0.1 + browTalkPulse : 0.03))
       if (dict['browInnerUp'] !== undefined) influences[dict['browInnerUp']] = THREE.MathUtils.lerp(influences[dict['browInnerUp']], browInnerTarget, 0.08)
       const browOuterTarget = isSpeaking
         ? THREE.MathUtils.lerp(0.02, voiceEnergy * 0.22 + browTalkPulse * 0.7, 0.36)
-        : 0
+        : listeningEnergy * 0.08
       if (dict['browOuterUp_L'] !== undefined) influences[dict['browOuterUp_L']] = THREE.MathUtils.lerp(influences[dict['browOuterUp_L']], browOuterTarget + browMotionState.left + browAsymmetry, 0.075)
       if (dict['browOuterUp_R'] !== undefined) influences[dict['browOuterUp_R']] = THREE.MathUtils.lerp(influences[dict['browOuterUp_R']], browOuterTarget + browMotionState.right - browAsymmetry, 0.075)
+      if (dict['browDown_L'] !== undefined) influences[dict['browDown_L']] = THREE.MathUtils.lerp(influences[dict['browDown_L']], expressionState.current.browFocus, 0.08)
+      if (dict['browDown_R'] !== undefined) influences[dict['browDown_R']] = THREE.MathUtils.lerp(influences[dict['browDown_R']], expressionState.current.browFocus, 0.08)
 
       if (dict['noseSneer_L'] !== undefined) influences[dict['noseSneer_L']] = THREE.MathUtils.lerp(influences[dict['noseSneer_L']], 0, 0.08)
       if (dict['noseSneer_R'] !== undefined) influences[dict['noseSneer_R']] = THREE.MathUtils.lerp(influences[dict['noseSneer_R']], 0, 0.08)

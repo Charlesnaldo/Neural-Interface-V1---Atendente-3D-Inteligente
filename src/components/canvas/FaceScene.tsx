@@ -8,9 +8,11 @@ import FaceModel from './FaceModel'
 
 export interface FaceSceneProps {
   isSpeaking: boolean;
+  isListening: boolean;
   loading: boolean;
   faceCoords: { x: number; y: number };
   expression: 'neutral' | 'smile' | 'sad';
+  inputLevel: number;
   audioMetrics: {
     amplitude: number
     sharpness: number
@@ -21,13 +23,21 @@ export interface FaceSceneProps {
   };
 }
 
-export default function FaceScene({ isSpeaking, loading, faceCoords, expression, audioMetrics }: FaceSceneProps) {
+export default function FaceScene({ isSpeaking, isListening, loading, faceCoords, expression, audioMetrics, inputLevel }: FaceSceneProps) {
   return (
     <Canvas camera={{ position: [0, 0, 4.5], fov: 80 }} style={{ width: '100%', height: '100%' }}>
       <ambientLight intensity={0.6} />
       <pointLight position={[5, 5, 5]} intensity={1} />
       <Suspense fallback={null}>
-        <FaceModel isSpeaking={isSpeaking} loading={loading} faceCoords={faceCoords} expression={expression} audioMetrics={audioMetrics} />
+        <FaceModel
+          isSpeaking={isSpeaking}
+          isListening={isListening}
+          loading={loading}
+          faceCoords={faceCoords}
+          expression={expression}
+          audioMetrics={audioMetrics}
+          inputLevel={inputLevel}
+        />
       </Suspense>
       <Environment preset="city" />
 

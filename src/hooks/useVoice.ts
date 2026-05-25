@@ -1,8 +1,8 @@
 'use client'
-import * as THREE from 'three'
-import { useCallback, useRef, useState } from 'react'
 
-type ElevenLabsState = 'unknown' | 'available' | 'unavailable'
+import * as THREE from 'three'
+import { useCallback, useEffect, useRef, useState } from 'react'
+
 type DominantBand = 'low' | 'mid' | 'high'
 
 interface AudioMetrics {
@@ -14,6 +14,15 @@ interface AudioMetrics {
   dominantBand: DominantBand
 }
 
+interface SpeechCursor {
+  text: string
+  startedAt: number
+  estimatedDuration: number
+  boundaryIndex: number
+  boundaryAt: number
+  phaseOffset: number
+}
+
 const ZERO_METRICS: AudioMetrics = {
   amplitude: 0,
   sharpness: 0,
@@ -23,300 +32,257 @@ const ZERO_METRICS: AudioMetrics = {
   dominantBand: 'mid',
 }
 
-const revokeAudioUrl = (url?: string | null) => {
-  if (url?.startsWith('blob:')) {
-    URL.revokeObjectURL(url)
+const normalizeSpeechText = (text: string) => text.replace(/\s+/g, ' ').trim()
+
+const simplifyChar = (char: string) =>
+  char
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+
+const smoothValue = (current: number, next: number, attack = 0.34, release = 0.16) => {
+  const factor = next > current ? attack : release
+  return current * (1 - factor) + next * factor
+}
+
+const createSpeechCursor = (text: string): SpeechCursor => {
+  const cleanText = normalizeSpeechText(text)
+  const wordCount = cleanText.split(/\s+/).filter(Boolean).length
+  const pauseCount = cleanText.match(/[,.!?;:]/g)?.length ?? 0
+
+  return {
+    text: cleanText,
+    startedAt: performance.now(),
+    estimatedDuration: Math.max(900, wordCount * 390 + cleanText.length * 18 + pauseCount * 130),
+    boundaryIndex: 0,
+    boundaryAt: performance.now(),
+    phaseOffset: Math.random() * Math.PI,
   }
 }
+
+const getBandsForChar = (char: string) => {
+  if (char === 'a') return { low: 0.38, mid: 0.76, high: 0.24 }
+  if (char === 'e') return { low: 0.24, mid: 0.64, high: 0.44 }
+  if (char === 'i') return { low: 0.12, mid: 0.46, high: 0.78 }
+  if (char === 'o') return { low: 0.66, mid: 0.46, high: 0.18 }
+  if (char === 'u') return { low: 0.72, mid: 0.32, high: 0.14 }
+  if ('fvszjx'.includes(char)) return { low: 0.1, mid: 0.36, high: 0.82 }
+  if ('mnpbtdkgcqrl'.includes(char)) return { low: 0.44, mid: 0.54, high: 0.28 }
+  return { low: 0.22, mid: 0.45, high: 0.26 }
+}
+
+const getDominantBand = (low: number, mid: number, high: number): DominantBand => {
+  if (high >= mid && high >= low) return 'high'
+  if (mid >= low) return 'mid'
+  return 'low'
+}
+
+const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms))
 
 export const useVoice = () => {
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [audioMetrics, setAudioMetrics] = useState<AudioMetrics>(ZERO_METRICS)
   const isUnlockedRef = useRef(false)
-  const elevenLabsStateRef = useRef<ElevenLabsState>('unknown')
-  const remoteAudioRef = useRef<HTMLAudioElement | null>(null)
-  const remoteAudioUrlRef = useRef<string | null>(null)
-  const animationFrameRef = useRef<number | null>(null)
-  const analyserRef = useRef<AnalyserNode | null>(null)
-  const sourceRef = useRef<MediaElementAudioSourceNode | null>(null)
-  const audioCtxRef = useRef<AudioContext | null>(null)
-  const localMeterRef = useRef<number | null>(null)
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null)
+  const voicesRef = useRef<SpeechSynthesisVoice[]>([])
+  const meterFrameRef = useRef<number | null>(null)
+  const keepAliveRef = useRef<number | null>(null)
+  const speechCursorRef = useRef<SpeechCursor | null>(null)
   const audioMetricsRef = useRef<AudioMetrics>(ZERO_METRICS)
 
-  const smoothValue = (current: number, next: number, attack = 0.3, release = 0.12) => {
-    const factor = next > current ? attack : release
-    return current * (1 - factor) + next * factor
-  }
+  const loadVoices = useCallback(() => {
+    voicesRef.current = window.speechSynthesis.getVoices()
+  }, [])
 
-  const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms))
+  useEffect(() => {
+    loadVoices()
+
+    const synth = window.speechSynthesis
+    const previousHandler = synth.onvoiceschanged
+    const handleVoicesChanged = (event: Event) => {
+      previousHandler?.call(synth, event)
+      loadVoices()
+    }
+
+    synth.onvoiceschanged = handleVoicesChanged
+    return () => {
+      if (synth.onvoiceschanged === handleVoicesChanged) {
+        synth.onvoiceschanged = previousHandler
+      }
+    }
+  }, [loadVoices])
+
+  const selectComputerVoice = useCallback(() => {
+    const voices = voicesRef.current.length ? voicesRef.current : window.speechSynthesis.getVoices()
+    const isPtBr = (voice: SpeechSynthesisVoice) => voice.lang.toLowerCase().replace('_', '-').startsWith('pt-br')
+    const isPt = (voice: SpeechSynthesisVoice) => voice.lang.toLowerCase().startsWith('pt')
+
+    return (
+      voices.find(voice => voice.localService && isPtBr(voice)) ||
+      voices.find(voice => voice.localService && isPt(voice)) ||
+      voices.find(isPtBr) ||
+      voices.find(isPt) ||
+      voices.find(voice => voice.localService) ||
+      voices[0] ||
+      null
+    )
+  }, [])
+
+  const stopLocalMeter = useCallback(() => {
+    if (meterFrameRef.current) {
+      cancelAnimationFrame(meterFrameRef.current)
+      meterFrameRef.current = null
+    }
+
+    speechCursorRef.current = null
+    audioMetricsRef.current = ZERO_METRICS
+    setAudioMetrics(ZERO_METRICS)
+  }, [])
+
+  const startLocalMeter = useCallback((text: string) => {
+    stopLocalMeter()
+
+    const cursor = createSpeechCursor(text)
+    speechCursorRef.current = cursor
+
+    const tick = () => {
+      const activeCursor = speechCursorRef.current
+      if (!activeCursor) return
+
+      const now = performance.now()
+      const elapsed = now - activeCursor.startedAt
+      const progress = THREE.MathUtils.clamp(elapsed / activeCursor.estimatedDuration, 0, 1)
+      const fallbackIndex = Math.floor(progress * Math.max(1, activeCursor.text.length - 1))
+      const boundaryIndex = activeCursor.boundaryIndex + Math.floor((now - activeCursor.boundaryAt) / 58)
+      const charIndex = THREE.MathUtils.clamp(Math.max(fallbackIndex, boundaryIndex), 0, Math.max(0, activeCursor.text.length - 1))
+      const rawChar = activeCursor.text[charIndex] || 'a'
+      const char = simplifyChar(rawChar)
+      const isPause = /[\s,.!?;:]/.test(rawChar)
+
+      const phase = elapsed / 1000 * (7.2 + activeCursor.text.length * 0.018) + activeCursor.phaseOffset
+      const syllablePulse = Math.pow(Math.max(0, Math.sin(phase * Math.PI)), 0.72)
+      const phrasePulse = 0.5 + Math.sin(phase * 0.42) * 0.5
+      const fade = THREE.MathUtils.clamp(Math.min(progress / 0.06, (1 - progress) / 0.08), 0, 1)
+      const bands = getBandsForChar(char)
+
+      const amplitudeTarget = THREE.MathUtils.clamp(
+        (isPause ? 0.08 : 0.16 + syllablePulse * 0.64 + phrasePulse * 0.08) * fade,
+        0,
+        1
+      )
+      const low = THREE.MathUtils.clamp(bands.low * amplitudeTarget + 0.02, 0, 1)
+      const mid = THREE.MathUtils.clamp(bands.mid * amplitudeTarget + 0.03, 0, 1)
+      const high = THREE.MathUtils.clamp(bands.high * amplitudeTarget + 0.015, 0, 1)
+      const spectrumTotal = Math.max(0.001, low + mid + high)
+      const sharpness = THREE.MathUtils.clamp((high * 1.18 + mid * 0.28) / spectrumTotal, 0, 1)
+
+      audioMetricsRef.current = {
+        amplitude: smoothValue(audioMetricsRef.current.amplitude, amplitudeTarget, 0.42, 0.18),
+        sharpness: smoothValue(audioMetricsRef.current.sharpness, sharpness, 0.34, 0.12),
+        low: smoothValue(audioMetricsRef.current.low, low, 0.34, 0.12),
+        mid: smoothValue(audioMetricsRef.current.mid, mid, 0.34, 0.12),
+        high: smoothValue(audioMetricsRef.current.high, high, 0.36, 0.12),
+        dominantBand: getDominantBand(low, mid, high),
+      }
+
+      setAudioMetrics(audioMetricsRef.current)
+      meterFrameRef.current = requestAnimationFrame(tick)
+    }
+
+    tick()
+  }, [stopLocalMeter])
+
+  const stopKeepAlive = useCallback(() => {
+    if (keepAliveRef.current) {
+      window.clearInterval(keepAliveRef.current)
+      keepAliveRef.current = null
+    }
+  }, [])
+
+  const startKeepAlive = useCallback(() => {
+    stopKeepAlive()
+    keepAliveRef.current = window.setInterval(() => {
+      if (window.speechSynthesis.speaking && window.speechSynthesis.paused) {
+        window.speechSynthesis.resume()
+      }
+    }, 4500)
+  }, [stopKeepAlive])
+
+  const finishSpeech = useCallback((utterance: SpeechSynthesisUtterance) => {
+    if (utteranceRef.current !== utterance) return
+
+    utteranceRef.current = null
+    stopKeepAlive()
+    stopLocalMeter()
+    setIsSpeaking(false)
+  }, [stopKeepAlive, stopLocalMeter])
+
+  const stop = useCallback(() => {
+    utteranceRef.current = null
+    window.speechSynthesis.cancel()
+    stopKeepAlive()
+    stopLocalMeter()
+    setIsSpeaking(false)
+  }, [stopKeepAlive, stopLocalMeter])
+
+  useEffect(() => stop, [stop])
 
   const unlockAudio = useCallback(() => {
     if (isUnlockedRef.current) return
 
-    const utterance = new SpeechSynthesisUtterance('')
+    loadVoices()
+    const utterance = new SpeechSynthesisUtterance(' ')
+    utterance.volume = 0
     window.speechSynthesis.speak(utterance)
+    window.setTimeout(() => {
+      if (utteranceRef.current === null) {
+        window.speechSynthesis.cancel()
+      }
+    }, 30)
 
     isUnlockedRef.current = true
-    console.log('>>> ZORD: Sistemas de voz locais desbloqueados.')
-  }, [])
+    console.log('>>> ZORD: voz local do computador desbloqueada.')
+  }, [loadVoices])
 
-  const stopLocalMeter = useCallback(() => {
-    if (localMeterRef.current) {
-      window.clearTimeout(localMeterRef.current)
-      localMeterRef.current = null
+  const playComputerSpeech = useCallback((text: string) => {
+    const utterance = new SpeechSynthesisUtterance(text)
+    const voice = selectComputerVoice()
+
+    utterance.lang = voice?.lang || 'pt-BR'
+    if (voice) utterance.voice = voice
+    utterance.rate = 1.02
+    utterance.pitch = 0.86
+    utterance.volume = 1
+
+    utterance.onboundary = event => {
+      if (utteranceRef.current !== utterance || !speechCursorRef.current) return
+      speechCursorRef.current.boundaryIndex = event.charIndex
+      speechCursorRef.current.boundaryAt = performance.now()
     }
-    audioMetricsRef.current = ZERO_METRICS
-    setAudioMetrics(ZERO_METRICS)
-  }, [])
-
-  const stopAnalyser = useCallback(() => {
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current)
-      animationFrameRef.current = null
+    utterance.onstart = () => {
+      if (utteranceRef.current !== utterance) return
+      startLocalMeter(text)
+      startKeepAlive()
+      setIsSpeaking(true)
     }
-    analyserRef.current?.disconnect()
-    sourceRef.current?.disconnect()
-    analyserRef.current = null
-    sourceRef.current = null
-    audioMetricsRef.current = ZERO_METRICS
-    setAudioMetrics(ZERO_METRICS)
-  }, [])
+    utterance.onend = () => finishSpeech(utterance)
+    utterance.onerror = () => finishSpeech(utterance)
 
-  const stopRemoteAudio = useCallback(() => {
-    stopAnalyser()
-    const audio = remoteAudioRef.current
-    if (!audio) {
-      return
-    }
-    audio.pause()
-    audio.currentTime = 0
-    const url = remoteAudioUrlRef.current || audio.src
-    revokeAudioUrl(url)
-    remoteAudioRef.current = null
-    remoteAudioUrlRef.current = null
-    audioMetricsRef.current = ZERO_METRICS
-    setAudioMetrics(ZERO_METRICS)
-  }, [stopAnalyser])
+    utteranceRef.current = utterance
+    startLocalMeter(text)
+    startKeepAlive()
+    setIsSpeaking(true)
+    window.speechSynthesis.speak(utterance)
+  }, [finishSpeech, selectComputerVoice, startKeepAlive, startLocalMeter])
 
-  const stop = useCallback(() => {
-    window.speechSynthesis.cancel()
-    stopRemoteAudio()
-    stopLocalMeter()
-    setIsSpeaking(false)
-  }, [stopRemoteAudio, stopLocalMeter])
+  const speak = useCallback(async (text: string) => {
+    const cleanText = normalizeSpeechText(text)
+    if (!cleanText) return
 
-  const startAnalyser = useCallback(
-    (audio: HTMLAudioElement) => {
-      stopAnalyser()
-
-      const ctx = audioCtxRef.current || new AudioContext()
-      audioCtxRef.current = ctx
-      if (ctx.state === 'suspended') {
-        ctx.resume().catch(() => {})
-      }
-
-      const source = ctx.createMediaElementSource(audio)
-      const analyser = ctx.createAnalyser()
-      analyser.fftSize = 512
-      analyser.smoothingTimeConstant = 0.18
-
-      source.connect(analyser)
-      analyser.connect(ctx.destination)
-
-      analyserRef.current = analyser
-      sourceRef.current = source
-      const timeBuffer = new Uint8Array(analyser.fftSize)
-      const freqBuffer = new Uint8Array(analyser.frequencyBinCount)
-      const nyquist = ctx.sampleRate / 2
-      const hzPerBin = nyquist / analyser.frequencyBinCount
-
-      const bandAverage = (fromHz: number, toHz: number) => {
-        const start = Math.max(0, Math.floor(fromHz / hzPerBin))
-        const end = Math.min(freqBuffer.length - 1, Math.ceil(toHz / hzPerBin))
-        if (end <= start) return 0
-        let sum = 0
-        let count = 0
-        for (let i = start; i <= end; i++) {
-          sum += freqBuffer[i]
-          count += 1
-        }
-        return count ? sum / count / 255 : 0
-      }
-
-      const tick = () => {
-        analyser.getByteTimeDomainData(timeBuffer)
-        analyser.getByteFrequencyData(freqBuffer)
-
-        let rmsAccumulator = 0
-        for (let i = 0; i < timeBuffer.length; i++) {
-          const normalized = (timeBuffer[i] - 128) / 128
-          rmsAccumulator += normalized * normalized
-        }
-        const rms = Math.sqrt(rmsAccumulator / Math.max(1, timeBuffer.length))
-        const low = THREE.MathUtils.clamp(bandAverage(80, 450), 0, 1)
-        const mid = THREE.MathUtils.clamp(bandAverage(450, 1800), 0, 1)
-        const high = THREE.MathUtils.clamp(bandAverage(1800, 7500), 0, 1)
-        const spectrumTotal = Math.max(0.001, low + mid + high)
-        const sharpness = THREE.MathUtils.clamp((high * 1.2 + mid * 0.35) / spectrumTotal, 0, 1)
-
-        const dominantBand: DominantBand =
-          high >= mid && high >= low ? 'high' : mid >= low ? 'mid' : 'low'
-
-        const targetAmplitude = THREE.MathUtils.clamp(rms * 2.4 + mid * 0.35, 0, 1)
-        audioMetricsRef.current = {
-          amplitude: smoothValue(audioMetricsRef.current.amplitude, targetAmplitude, 0.36, 0.14),
-          sharpness: smoothValue(audioMetricsRef.current.sharpness, sharpness, 0.3, 0.1),
-          low: smoothValue(audioMetricsRef.current.low, low, 0.28, 0.1),
-          mid: smoothValue(audioMetricsRef.current.mid, mid, 0.28, 0.1),
-          high: smoothValue(audioMetricsRef.current.high, high, 0.3, 0.1),
-          dominantBand,
-        }
-        setAudioMetrics(audioMetricsRef.current)
-        animationFrameRef.current = requestAnimationFrame(tick)
-      }
-      tick()
-    },
-    [stopAnalyser]
-  )
-
-  const startLocalMeter = useCallback(() => {
-    stopLocalMeter()
-
-    let localPhase = 0
-    const tick = () => {
-      localPhase += 0.3 + Math.random() * 0.4
-      const low = THREE.MathUtils.clamp(0.15 + Math.abs(Math.sin(localPhase * 0.5)) * 0.35, 0, 1)
-      const mid = THREE.MathUtils.clamp(0.2 + Math.abs(Math.sin(localPhase * 0.9)) * 0.45, 0, 1)
-      const high = THREE.MathUtils.clamp(0.1 + Math.abs(Math.sin(localPhase * 1.3)) * 0.3, 0, 1)
-      const amplitude = THREE.MathUtils.clamp(mid * 0.6 + low * 0.25 + Math.random() * 0.2, 0, 1)
-      const sharpness = THREE.MathUtils.clamp((high * 1.1 + mid * 0.2) / Math.max(0.001, low + mid + high), 0, 1)
-      const dominantBand: DominantBand =
-        high >= mid && high >= low ? 'high' : mid >= low ? 'mid' : 'low'
-
-      audioMetricsRef.current = { amplitude, sharpness, low, mid, high, dominantBand }
-      setAudioMetrics(audioMetricsRef.current)
-      localMeterRef.current = window.setTimeout(tick, 150 + Math.random() * 150)
-    }
-    tick()
-  }, [stopLocalMeter])
-
-  const playLocalSpeech = useCallback(
-    (text: string) => {
-      const utterance = new SpeechSynthesisUtterance(text)
-      utterance.lang = 'pt-BR'
-
-      const voices = window.speechSynthesis.getVoices()
-      const brVoice =
-        voices.find(v => v.lang.includes('pt-BR') && v.name.includes('Online')) ||
-        voices.find(v => v.lang.includes('pt-BR'))
-
-      if (brVoice) utterance.voice = brVoice
-
-      utterance.rate = 1.0
-      utterance.pitch = 1.0
-
-      utterance.onstart = () => {
-        startLocalMeter()
-        setIsSpeaking(true)
-      }
-      utterance.onend = () => {
-        stopLocalMeter()
-        setIsSpeaking(false)
-      }
-      utterance.onerror = () => {
-        stopLocalMeter()
-        setIsSpeaking(false)
-      }
-
-      window.speechSynthesis.speak(utterance)
-    },
-    [startLocalMeter, stopLocalMeter]
-  )
-
-  const speakElevenLabs = useCallback(
-    async (text: string) => {
-      let url: string | null = null
-      let audio: HTMLAudioElement | null = null
-      try {
-        const res = await fetch('/api/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
-        })
-
-        if (!res.ok) {
-          throw new Error(`TTS ElevenLabs retornou ${res.status}`)
-        }
-
-        const blob = await res.blob()
-        url = URL.createObjectURL(blob)
-
-        stopRemoteAudio()
-
-        remoteAudioUrlRef.current = url
-        audio = new Audio(url)
-        remoteAudioRef.current = audio
-
-        audio.onplay = () => {
-          setIsSpeaking(true)
-          if (audio) startAnalyser(audio)
-        }
-        audio.onended = () => {
-          setIsSpeaking(false)
-          revokeAudioUrl(remoteAudioUrlRef.current || audio?.src)
-          if (remoteAudioRef.current === audio) {
-            remoteAudioRef.current = null
-            remoteAudioUrlRef.current = null
-          }
-          stopAnalyser()
-        }
-        audio.onerror = event => {
-          console.error('Erro ao reproduzir áudio da ElevenLabs', event)
-          setIsSpeaking(false)
-          stopRemoteAudio()
-        }
-
-        await audio.play()
-        elevenLabsStateRef.current = 'available'
-        return true
-      } catch (error) {
-        if (audio && remoteAudioRef.current === audio) {
-          remoteAudioRef.current = null
-          remoteAudioUrlRef.current = null
-        }
-        if (url) {
-          URL.revokeObjectURL(url)
-        }
-        console.error('Falha ElevenLabs TTS:', error)
-        elevenLabsStateRef.current = 'unavailable'
-        setAudioMetrics(ZERO_METRICS)
-        return false
-      }
-    },
-    [startAnalyser, stopAnalyser, stopRemoteAudio]
-  )
-
-  const speak = useCallback(
-    async (text: string) => {
-      if (!text) return
-
-      stop()
-      const delay = THREE.MathUtils.clamp(
-        130 + Math.min(180, text.length * 1.5) + (/[?.!]/.test(text) ? 40 : 0),
-        130,
-        340
-      )
-      await wait(delay)
-
-      if (elevenLabsStateRef.current !== 'unavailable') {
-        const success = await speakElevenLabs(text)
-        if (success) return
-      }
-
-      playLocalSpeech(text)
-    },
-    [playLocalSpeech, stop, speakElevenLabs]
-  )
+    stop()
+    await wait(50)
+    playComputerSpeech(cleanText)
+  }, [playComputerSpeech, stop])
 
   return { speak, stop, isSpeaking, unlockAudio, audioMetrics }
 }

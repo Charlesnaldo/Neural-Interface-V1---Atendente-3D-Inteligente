@@ -89,10 +89,11 @@ export async function POST(req: Request) {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "llama-3.1-8b-instant",
+        model: process.env.GROQ_MODEL || "openai/gpt-oss-20b",
         messages,
         temperature: 0.45,
-        max_tokens: 120,
+        max_tokens: 1024,
+        reasoning_effort: "low",
       }),
     });
 

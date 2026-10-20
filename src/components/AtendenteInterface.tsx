@@ -80,7 +80,7 @@ export default function AtendenteInterface() {
   const stopListeningRef = useRef<() => void>(() => {})
 
   // --- 2. GESTORES DE LOGICA (Hooks) ---
-  const { speak, stop, isSpeaking, unlockAudio, audioMetrics } = useVoice()
+  const { speak, stop, isSpeaking, unlockAudio, audioMetrics, audioMetricsLiveRef } = useVoice()
 
   // --- SOUND DESIGN (SFX) ---
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -380,6 +380,7 @@ export default function AtendenteInterface() {
             faceCoords={faceCoords}
             expression={expression}
             audioMetrics={audioMetrics}
+            audioMetricsLiveRef={audioMetricsLiveRef}
             inputLevel={inputLevel}
           />
         </FaceDisplay>

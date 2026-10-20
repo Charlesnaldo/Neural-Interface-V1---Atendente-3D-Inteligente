@@ -1,7 +1,7 @@
 'use client'
 import { Canvas } from '@react-three/fiber'
 import { Environment } from '@react-three/drei'
-import { Suspense } from 'react'
+import { Suspense, type MutableRefObject } from 'react'
 import * as THREE from 'three'
 import { EffectComposer, Bloom, ChromaticAberration } from '@react-three/postprocessing'
 import FaceModel from './FaceModel'
@@ -13,6 +13,7 @@ export interface FaceSceneProps {
   faceCoords: { x: number; y: number };
   expression: 'neutral' | 'smile' | 'sad';
   inputLevel: number;
+  audioMetricsLiveRef?: MutableRefObject<FaceSceneProps['audioMetrics']>;
   audioMetrics: {
     amplitude: number
     sharpness: number
@@ -29,7 +30,7 @@ export interface FaceSceneProps {
   };
 }
 
-export default function FaceScene({ isSpeaking, isListening, loading, faceCoords, expression, audioMetrics, inputLevel }: FaceSceneProps) {
+export default function FaceScene({ isSpeaking, isListening, loading, faceCoords, expression, audioMetrics, audioMetricsLiveRef, inputLevel }: FaceSceneProps) {
   return (
     <Canvas camera={{ position: [0, 0, 4.5], fov: 80 }} style={{ width: '100%', height: '100%' }}>
       <ambientLight intensity={0.6} />
@@ -42,6 +43,7 @@ export default function FaceScene({ isSpeaking, isListening, loading, faceCoords
           faceCoords={faceCoords}
           expression={expression}
           audioMetrics={audioMetrics}
+          audioMetricsLiveRef={audioMetricsLiveRef}
           inputLevel={inputLevel}
         />
       </Suspense>

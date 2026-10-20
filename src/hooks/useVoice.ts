@@ -30,28 +30,16 @@ interface SpeechCursor {
 }
 
 const ZERO_METRICS: AudioMetrics = {
-  amplitude: 0,
-  sharpness: 0,
-  low: 0,
-  mid: 0,
-  high: 0,
-  dominantBand: 'mid',
-  mouthOpen: 0,
-  mouthWide: 0,
-  mouthRound: 0,
-  mouthClosed: 0,
-  mouthPress: 0,
-  mouthDental: 0,
+  amplitude: 0, sharpness: 0, low: 0, mid: 0, high: 0, dominantBand: 'mid',
+  mouthOpen: 0, mouthWide: 0, mouthRound: 0, mouthClosed: 0, mouthPress: 0, mouthDental: 0,
 }
 
 const normalizeSpeechText = (text: string) => text.replace(/\s+/g, ' ').trim()
 
 const simplifyChar = (char: string) =>
-  char
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
+  char.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 
+// attack/release com velocidades separadas
 const smoothValue = (current: number, next: number, attack = 0.34, release = 0.16) => {
   const factor = next > current ? attack : release
   return current * (1 - factor) + next * factor
@@ -61,7 +49,6 @@ const createSpeechCursor = (text: string): SpeechCursor => {
   const cleanText = normalizeSpeechText(text)
   const wordCount = cleanText.split(/\s+/).filter(Boolean).length
   const pauseCount = cleanText.match(/[,.!?;:]/g)?.length ?? 0
-
   return {
     text: cleanText,
     startedAt: performance.now(),
@@ -86,24 +73,33 @@ const getBandsForChar = (char: string) => {
 const getMouthShapeForChar = (rawChar: string) => {
   const char = simplifyChar(rawChar)
 
+  // Pausa/pontuação: boca quase fechada mas NÃO totalmente
+  // — isso evita que a mandíbula "trave" entre palavras.
   if (/[\s,.!?;:]/.test(rawChar)) {
-    return { open: 0.02, wide: 0, round: 0, closed: 0.32, press: 0.08, dental: 0 }
+    return { open: 0.08, wide: 0, round: 0, closed: 0.18, press: 0.04, dental: 0 }
   }
 
-  if (char === 'a') return { open: 0.7, wide: 0.08, round: 0, closed: 0, press: 0, dental: 0 }
-  if (char === 'e') return { open: 0.42, wide: 0.62, round: 0, closed: 0, press: 0, dental: 0.05 }
-  if (char === 'i') return { open: 0.24, wide: 0.82, round: 0, closed: 0, press: 0, dental: 0.08 }
-  if (char === 'o') return { open: 0.36, wide: 0.04, round: 0.66, closed: 0, press: 0, dental: 0 }
-  if (char === 'u') return { open: 0.22, wide: 0, round: 0.82, closed: 0, press: 0, dental: 0 }
+  // Vogais — abertura generosa para garantir movimento visível
+  if (char === 'a') return { open: 0.82, wide: 0.08, round: 0,    closed: 0,    press: 0,    dental: 0    }
+  if (char === 'e') return { open: 0.52, wide: 0.68, round: 0,    closed: 0,    press: 0,    dental: 0.05 }
+  if (char === 'i') return { open: 0.30, wide: 0.86, round: 0,    closed: 0,    press: 0,    dental: 0.08 }
+  if (char === 'o') return { open: 0.44, wide: 0.04, round: 0.72, closed: 0,    press: 0,    dental: 0    }
+  if (char === 'u') return { open: 0.28, wide: 0,    round: 0.88, closed: 0,    press: 0,    dental: 0    }
 
-  if ('mpb'.includes(char)) return { open: 0.02, wide: 0.02, round: 0, closed: 0.9, press: 0.8, dental: 0 }
-  if ('fv'.includes(char)) return { open: 0.16, wide: 0.22, round: 0, closed: 0.08, press: 0.08, dental: 0.82 }
-  if ('szxj'.includes(char)) return { open: 0.12, wide: 0.52, round: 0.02, closed: 0.08, press: 0.12, dental: 0.28 }
-  if ('tdnl'.includes(char)) return { open: 0.18, wide: 0.26, round: 0, closed: 0.18, press: 0.22, dental: 0.34 }
-  if ('kgcq'.includes(char)) return { open: 0.24, wide: 0.16, round: 0.08, closed: 0.1, press: 0.16, dental: 0.08 }
-  if ('rhyw'.includes(char)) return { open: 0.2, wide: 0.22, round: char === 'w' ? 0.48 : 0.06, closed: 0.04, press: 0.04, dental: 0.04 }
+  // Consoantes bilabiais: boca fechada brevemente, depois reabre
+  if ('mpb'.includes(char)) return { open: 0.04, wide: 0.02, round: 0, closed: 0.72, press: 0.85, dental: 0    }
+  // Labiodentais: lábio superior sobe
+  if ('fv'.includes(char))  return { open: 0.22, wide: 0.26, round: 0, closed: 0.06, press: 0.06, dental: 0.86 }
+  // Sibilantes
+  if ('szxj'.includes(char)) return { open: 0.18, wide: 0.56, round: 0.02, closed: 0.06, press: 0.10, dental: 0.32 }
+  // Alveolares/dentais
+  if ('tdnl'.includes(char)) return { open: 0.24, wide: 0.28, round: 0,    closed: 0.14, press: 0.18, dental: 0.38 }
+  // Velares
+  if ('kgcq'.includes(char)) return { open: 0.30, wide: 0.18, round: 0.08, closed: 0.08, press: 0.12, dental: 0.08 }
+  // Líquidas/semivogais
+  if ('rhyw'.includes(char)) return { open: 0.26, wide: 0.24, round: char === 'w' ? 0.52 : 0.08, closed: 0.04, press: 0.04, dental: 0.04 }
 
-  return { open: 0.2, wide: 0.22, round: 0.04, closed: 0.04, press: 0.04, dental: 0.04 }
+  return { open: 0.24, wide: 0.24, round: 0.04, closed: 0.04, press: 0.04, dental: 0.04 }
 }
 
 const getDominantBand = (low: number, mid: number, high: number): DominantBand => {
@@ -125,50 +121,37 @@ export const useVoice = () => {
   const speechCursorRef = useRef<SpeechCursor | null>(null)
   const audioMetricsRef = useRef<AudioMetrics>(ZERO_METRICS)
 
+  // Expõe a ref diretamente para que o FaceModel possa lê-la
+  // sem depender do ciclo de re-render do useState.
+  const audioMetricsLiveRef = audioMetricsRef
+
   const loadVoices = useCallback(() => {
     voicesRef.current = window.speechSynthesis.getVoices()
   }, [])
 
   useEffect(() => {
     loadVoices()
-
     const synth = window.speechSynthesis
-    const previousHandler = synth.onvoiceschanged
-    const handleVoicesChanged = (event: Event) => {
-      previousHandler?.call(synth, event)
-      loadVoices()
-    }
-
-    synth.onvoiceschanged = handleVoicesChanged
-    return () => {
-      if (synth.onvoiceschanged === handleVoicesChanged) {
-        synth.onvoiceschanged = previousHandler
-      }
-    }
+    const prev = synth.onvoiceschanged
+    const handler = (e: Event) => { prev?.call(synth, e); loadVoices() }
+    synth.onvoiceschanged = handler
+    return () => { if (synth.onvoiceschanged === handler) synth.onvoiceschanged = prev }
   }, [loadVoices])
 
   const selectComputerVoice = useCallback(() => {
     const voices = voicesRef.current.length ? voicesRef.current : window.speechSynthesis.getVoices()
-    const isPtBr = (voice: SpeechSynthesisVoice) => voice.lang.toLowerCase().replace('_', '-').startsWith('pt-br')
-    const isPt = (voice: SpeechSynthesisVoice) => voice.lang.toLowerCase().startsWith('pt')
-
+    const isPtBr = (v: SpeechSynthesisVoice) => v.lang.toLowerCase().replace('_', '-').startsWith('pt-br')
+    const isPt   = (v: SpeechSynthesisVoice) => v.lang.toLowerCase().startsWith('pt')
     return (
-      voices.find(voice => voice.localService && isPtBr(voice)) ||
-      voices.find(voice => voice.localService && isPt(voice)) ||
-      voices.find(isPtBr) ||
-      voices.find(isPt) ||
-      voices.find(voice => voice.localService) ||
-      voices[0] ||
-      null
+      voices.find(v => v.localService && isPtBr(v)) ||
+      voices.find(v => v.localService && isPt(v))   ||
+      voices.find(isPtBr) || voices.find(isPt)      ||
+      voices.find(v => v.localService) || voices[0] || null
     )
   }, [])
 
   const stopLocalMeter = useCallback(() => {
-    if (meterFrameRef.current) {
-      cancelAnimationFrame(meterFrameRef.current)
-      meterFrameRef.current = null
-    }
-
+    if (meterFrameRef.current) { cancelAnimationFrame(meterFrameRef.current); meterFrameRef.current = null }
     speechCursorRef.current = null
     audioMetricsRef.current = ZERO_METRICS
     setAudioMetrics(ZERO_METRICS)
@@ -176,7 +159,6 @@ export const useVoice = () => {
 
   const startLocalMeter = useCallback((text: string) => {
     stopLocalMeter()
-
     const cursor = createSpeechCursor(text)
     speechCursorRef.current = cursor
 
@@ -184,54 +166,92 @@ export const useVoice = () => {
       const activeCursor = speechCursorRef.current
       if (!activeCursor) return
 
-      const now = performance.now()
-      const elapsed = now - activeCursor.startedAt
+      const now      = performance.now()
+      const elapsed  = now - activeCursor.startedAt
       const progress = THREE.MathUtils.clamp(elapsed / activeCursor.estimatedDuration, 0, 1)
-      const fallbackIndex = Math.floor(progress * Math.max(1, activeCursor.text.length - 1))
-      const boundaryIndex = activeCursor.boundaryIndex + Math.floor((now - activeCursor.boundaryAt) / 58)
-      const charIndex = THREE.MathUtils.clamp(Math.max(fallbackIndex, boundaryIndex), 0, Math.max(0, activeCursor.text.length - 1))
-      const rawChar = activeCursor.text[charIndex] || 'a'
-      const char = simplifyChar(rawChar)
-      const isPause = /[\s,.!?;:]/.test(rawChar)
 
-      const phase = elapsed / 1000 * (7.2 + activeCursor.text.length * 0.018) + activeCursor.phaseOffset
-      const syllablePulse = Math.pow(Math.max(0, Math.sin(phase * Math.PI)), 0.72)
-      const phrasePulse = 0.5 + Math.sin(phase * 0.42) * 0.5
-      const fade = THREE.MathUtils.clamp(Math.min(progress / 0.06, (1 - progress) / 0.08), 0, 1)
-      const bands = getBandsForChar(char)
-      const mouthShape = getMouthShapeForChar(rawChar)
-
-      const amplitudeTarget = THREE.MathUtils.clamp(
-        (isPause ? 0.08 : 0.16 + syllablePulse * 0.64 + phrasePulse * 0.08) * fade,
-        0,
-        1
+      // Índice do caractere atual — usa boundary quando disponível
+      const fallbackIndex  = Math.floor(progress * Math.max(1, activeCursor.text.length - 1))
+      const boundaryIndex  = activeCursor.boundaryIndex + Math.floor((now - activeCursor.boundaryAt) / 58)
+      const charIndex      = THREE.MathUtils.clamp(
+        Math.max(fallbackIndex, boundaryIndex), 0,
+        Math.max(0, activeCursor.text.length - 1)
       )
-      const articulation = THREE.MathUtils.clamp((isPause ? 0.18 : 0.38 + amplitudeTarget * 0.8) * fade, 0, 1)
-      const openTarget = THREE.MathUtils.clamp(mouthShape.open * articulation, 0, 0.76)
-      const wideTarget = THREE.MathUtils.clamp(mouthShape.wide * articulation, 0, 0.86)
-      const roundTarget = THREE.MathUtils.clamp(mouthShape.round * articulation, 0, 0.86)
-      const closedTarget = THREE.MathUtils.clamp(mouthShape.closed * fade, 0, 0.9)
-      const pressTarget = THREE.MathUtils.clamp(mouthShape.press * fade, 0, 0.84)
-      const dentalTarget = THREE.MathUtils.clamp(mouthShape.dental * articulation, 0, 0.86)
-      const low = THREE.MathUtils.clamp(bands.low * amplitudeTarget + 0.02, 0, 1)
-      const mid = THREE.MathUtils.clamp(bands.mid * amplitudeTarget + 0.03, 0, 1)
+
+      const rawChar  = activeCursor.text[charIndex] || 'a'
+      const char     = simplifyChar(rawChar)
+      const isPause  = /[\s,.!?;:]/.test(rawChar)
+
+      // ── Fade in/out suave nos extremos da fala ─────────────────────────
+      const fade = THREE.MathUtils.clamp(Math.min(progress / 0.05, (1 - progress) / 0.06), 0, 1)
+
+      // ── Pulso de sílaba ────────────────────────────────────────────────
+      // Usamos uma onda que NUNCA vai a zero — mínimo de 0.35 mesmo no vale.
+      // Isso garante que a boca sempre se mova durante a fala, mesmo entre sílabas.
+      const phase        = elapsed / 1000 * (6.5 + activeCursor.text.length * 0.015) + activeCursor.phaseOffset
+      const rawPulse     = Math.sin(phase * Math.PI)           // -1 a 1
+      const syllablePulse = 0.35 + rawPulse * 0.65             // 0.35 a 1.0  ← nunca zero
+
+      // Pulso de frase (variação lenta de energia)
+      const phrasePulse  = 0.6 + Math.sin(phase * 0.38) * 0.4  // 0.2 a 1.0
+
+      // ── Amplitude geral ────────────────────────────────────────────────
+      // isPause reduz mas não zera — a mandíbula ainda se move levemente.
+      const amplitudeTarget = THREE.MathUtils.clamp(
+        (isPause
+          ? 0.12 + syllablePulse * 0.10
+          : 0.22 + syllablePulse * 0.55 + phrasePulse * 0.08
+        ) * fade,
+        0, 1
+      )
+
+      // ── Articulação ────────────────────────────────────────────────────
+      const articulation = THREE.MathUtils.clamp(
+        (isPause ? 0.22 : 0.45 + amplitudeTarget * 0.75) * fade,
+        0, 1
+      )
+
+      const mouthShape = getMouthShapeForChar(rawChar)
+      const bands      = getBandsForChar(char)
+
+      // ── Targets de boca ────────────────────────────────────────────────
+      //
+      // openTarget: nunca cai abaixo de amplitudeTarget * 0.35 durante a fala.
+      // Isso garante que mesmo em consoantes, a mandíbula mantém algum movimento.
+      const openTarget   = THREE.MathUtils.clamp(
+        Math.max(mouthShape.open * articulation, amplitudeTarget * 0.35),
+        0, 0.85
+      )
+      const wideTarget   = THREE.MathUtils.clamp(mouthShape.wide   * articulation, 0, 0.88)
+      const roundTarget  = THREE.MathUtils.clamp(mouthShape.round  * articulation, 0, 0.88)
+      const closedTarget = THREE.MathUtils.clamp(mouthShape.closed * fade,         0, 0.80)
+      const pressTarget  = THREE.MathUtils.clamp(mouthShape.press  * fade,         0, 0.85)
+      const dentalTarget = THREE.MathUtils.clamp(mouthShape.dental * articulation, 0, 0.88)
+
+      // ── Bandas espectrais ──────────────────────────────────────────────
+      const low  = THREE.MathUtils.clamp(bands.low  * amplitudeTarget + 0.02, 0, 1)
+      const mid  = THREE.MathUtils.clamp(bands.mid  * amplitudeTarget + 0.03, 0, 1)
       const high = THREE.MathUtils.clamp(bands.high * amplitudeTarget + 0.015, 0, 1)
       const spectrumTotal = Math.max(0.001, low + mid + high)
       const sharpness = THREE.MathUtils.clamp((high * 1.18 + mid * 0.28) / spectrumTotal, 0, 1)
 
+      // ── Smooth ────────────────────────────────────────────────────────
+      // mouthOpen: attack RÁPIDO (0.68) para seguir sílabas,
+      //            release moderado (0.24) para não ficar aberta demais.
+      const prev = audioMetricsRef.current
       audioMetricsRef.current = {
-        amplitude: smoothValue(audioMetricsRef.current.amplitude, amplitudeTarget, 0.42, 0.18),
-        sharpness: smoothValue(audioMetricsRef.current.sharpness, sharpness, 0.34, 0.12),
-        low: smoothValue(audioMetricsRef.current.low, low, 0.34, 0.12),
-        mid: smoothValue(audioMetricsRef.current.mid, mid, 0.34, 0.12),
-        high: smoothValue(audioMetricsRef.current.high, high, 0.36, 0.12),
+        amplitude:   smoothValue(prev.amplitude,   amplitudeTarget, 0.45, 0.20),
+        sharpness:   smoothValue(prev.sharpness,   sharpness,       0.34, 0.12),
+        low:         smoothValue(prev.low,         low,             0.34, 0.12),
+        mid:         smoothValue(prev.mid,         mid,             0.34, 0.12),
+        high:        smoothValue(prev.high,        high,            0.36, 0.12),
         dominantBand: getDominantBand(low, mid, high),
-        mouthOpen: smoothValue(audioMetricsRef.current.mouthOpen, openTarget, 0.54, 0.18),
-        mouthWide: smoothValue(audioMetricsRef.current.mouthWide, wideTarget, 0.42, 0.16),
-        mouthRound: smoothValue(audioMetricsRef.current.mouthRound, roundTarget, 0.48, 0.18),
-        mouthClosed: smoothValue(audioMetricsRef.current.mouthClosed, closedTarget, 0.62, 0.28),
-        mouthPress: smoothValue(audioMetricsRef.current.mouthPress, pressTarget, 0.58, 0.26),
-        mouthDental: smoothValue(audioMetricsRef.current.mouthDental, dentalTarget, 0.46, 0.18),
+        mouthOpen:   smoothValue(prev.mouthOpen,   openTarget,   0.68, 0.24),
+        mouthWide:   smoothValue(prev.mouthWide,   wideTarget,   0.52, 0.18),
+        mouthRound:  smoothValue(prev.mouthRound,  roundTarget,  0.52, 0.20),
+        mouthClosed: smoothValue(prev.mouthClosed, closedTarget, 0.62, 0.30),
+        mouthPress:  smoothValue(prev.mouthPress,  pressTarget,  0.62, 0.28),
+        mouthDental: smoothValue(prev.mouthDental, dentalTarget, 0.48, 0.20),
       }
 
       setAudioMetrics(audioMetricsRef.current)
@@ -242,24 +262,18 @@ export const useVoice = () => {
   }, [stopLocalMeter])
 
   const stopKeepAlive = useCallback(() => {
-    if (keepAliveRef.current) {
-      window.clearInterval(keepAliveRef.current)
-      keepAliveRef.current = null
-    }
+    if (keepAliveRef.current) { window.clearInterval(keepAliveRef.current); keepAliveRef.current = null }
   }, [])
 
   const startKeepAlive = useCallback(() => {
     stopKeepAlive()
     keepAliveRef.current = window.setInterval(() => {
-      if (window.speechSynthesis.speaking && window.speechSynthesis.paused) {
-        window.speechSynthesis.resume()
-      }
+      if (window.speechSynthesis.speaking && window.speechSynthesis.paused) window.speechSynthesis.resume()
     }, 4500)
   }, [stopKeepAlive])
 
   const finishSpeech = useCallback((utterance: SpeechSynthesisUtterance) => {
     if (utteranceRef.current !== utterance) return
-
     utteranceRef.current = null
     stopKeepAlive()
     stopLocalMeter()
@@ -278,29 +292,21 @@ export const useVoice = () => {
 
   const unlockAudio = useCallback(() => {
     if (isUnlockedRef.current) return
-
     loadVoices()
-    const utterance = new SpeechSynthesisUtterance(' ')
-    utterance.volume = 0
-    window.speechSynthesis.speak(utterance)
-    window.setTimeout(() => {
-      if (utteranceRef.current === null) {
-        window.speechSynthesis.cancel()
-      }
-    }, 30)
-
+    const u = new SpeechSynthesisUtterance(' ')
+    u.volume = 0
+    window.speechSynthesis.speak(u)
+    window.setTimeout(() => { if (utteranceRef.current === null) window.speechSynthesis.cancel() }, 30)
     isUnlockedRef.current = true
-    console.log('>>> ZORD: voz local do computador desbloqueada.')
   }, [loadVoices])
 
   const playComputerSpeech = useCallback((text: string) => {
     const utterance = new SpeechSynthesisUtterance(text)
     const voice = selectComputerVoice()
-
-    utterance.lang = voice?.lang || 'pt-BR'
+    utterance.lang   = voice?.lang || 'pt-BR'
     if (voice) utterance.voice = voice
-    utterance.rate = 1.02
-    utterance.pitch = 0.86
+    utterance.rate   = 1.02
+    utterance.pitch  = 0.86
     utterance.volume = 1
 
     utterance.onboundary = event => {
@@ -314,7 +320,7 @@ export const useVoice = () => {
       startKeepAlive()
       setIsSpeaking(true)
     }
-    utterance.onend = () => finishSpeech(utterance)
+    utterance.onend   = () => finishSpeech(utterance)
     utterance.onerror = () => finishSpeech(utterance)
 
     utteranceRef.current = utterance
@@ -327,11 +333,10 @@ export const useVoice = () => {
   const speak = useCallback(async (text: string) => {
     const cleanText = normalizeSpeechText(text)
     if (!cleanText) return
-
     stop()
     await wait(50)
     playComputerSpeech(cleanText)
   }, [playComputerSpeech, stop])
 
-  return { speak, stop, isSpeaking, unlockAudio, audioMetrics }
+  return { speak, stop, isSpeaking, unlockAudio, audioMetrics, audioMetricsLiveRef }
 }

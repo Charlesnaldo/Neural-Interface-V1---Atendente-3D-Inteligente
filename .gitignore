@@ -44,3 +44,7 @@ Zord-vision/venv/
 __pycache__/
 *.py[cod]
 .codex-next-dev*.log
+
+# Local applications, installers and diagnostic scripts
+/.local/*
+!/.local/start-voicestudio.cmd

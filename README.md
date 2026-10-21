@@ -86,3 +86,7 @@ application login is a separate layer. Camera access requires HTTPS or localhost
 
 Checks: `npm run lint`, `npm run build`, and, from `Zord-vision`,
 `venv\\Scripts\\python.exe -m unittest test_face_store.py test_face_vision.py`.
+
+Visitor photos: voluntary preview and explicit consent, private administrator
+gallery at `/admin/photos`, and browser-held deletion receipts. Camera permission
+does not automatically save photos. See [the photo flow](docs/visitor-photos.md).

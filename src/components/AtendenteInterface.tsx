@@ -13,6 +13,7 @@ import { ChatControls } from './interface/ChatControls'
 import { ProfileCard } from './interface/ProfileCard'
 import { AssistantPanel } from './interface/AssistantPanel'
 import { FaceRegistry } from './interface/FaceRegistry'
+import { VisitorPhotoCapture } from './interface/VisitorPhotoCapture'
 import { emptyStore, personalCommand } from '@/lib/assistant-store'
 import { usePersonalStore } from '@/hooks/usePersonalStore'
 import { createClient } from '@/lib/supabase/client'
@@ -400,6 +401,7 @@ export default function AtendenteInterface({ userId }: { userId: string }) {
   return (
     <main className="h-screen w-full bg-black overflow-hidden flex items-center justify-center relative">
       <div className="absolute left-4 top-5 z-50 flex gap-2">
+        {userId && <Link href="/admin/photos" className="rounded-xl bg-neutral-950/90 p-2 text-sm text-cyan-200">Fotos autorizadas</Link>}
         {userId ? <>
           <button type="button" aria-expanded={panelOpen} onClick={() => { setPanelOpen(value => !value); setFacesOpen(false) }} className="rounded-xl border border-white/15 bg-neutral-950/90 px-4 py-2 text-sm text-cyan-200">{panelOpen ? 'Fechar painel' : 'Meu assistente'}</button>
           <button type="button" aria-expanded={facesOpen} onClick={() => { setFacesOpen(value => !value); setPanelOpen(false) }} className="rounded-xl border border-white/15 bg-neutral-950/90 px-4 py-2 text-sm text-cyan-200">{facesOpen ? 'Fechar rostos' : 'Rostos'}</button>
@@ -408,7 +410,7 @@ export default function AtendenteInterface({ userId }: { userId: string }) {
           <Link href="/admin" className="rounded-xl border border-white/15 bg-neutral-950/90 px-3 py-2 text-sm text-neutral-300">Admin</Link>
         </>}
       </div>
-      {!userId && <p className="absolute left-4 top-16 z-30 max-w-60 rounded-lg bg-black/70 p-2 text-xs text-neutral-400">Câmera opcional: imagens processadas ao vivo pelo Zord para rastrear rostos, sem identificação e sem guardar fotos.</p>}
+      {!userId && <p className="absolute left-4 top-16 z-30 max-w-60 rounded-lg bg-black/70 p-2 text-xs text-neutral-400">Câmera opcional para rastreamento ao vivo. Fotos são salvas somente após sua autorização separada.</p>}
       {userId && facesOpen && <FaceRegistry faces={faces} online={visionStatus === 'online'} cameraEnabled={cameraEnabled} recognitionAvailable={recognitionAvailable} autoCapture={autoCapture} onAutoCapture={setAutoCapture} onCamera={() => { setCameraEnabled(value => !value); setAutoCapture(false); setVisionReport('') }} command={faceCommand} error={faceError} />}
       {(error || storageError) && !panelOpen && <p role="alert" className="absolute bottom-4 left-4 right-4 z-50 rounded-lg bg-red-950 p-3 text-sm text-red-200">{storageError || error}</p>}
       {panelOpen && <AssistantPanel store={store} ready={ready} saving={saving} onImport={importLocalData} onSignOut={async () => { if (saving) return; requestRef.current?.abort(); stop(); setCameraEnabled(false); setMicEnabled(false); stopListening(); const { error } = await createClient().auth.signOut(); if (error) { setError('Não foi possível sair. Tente novamente.'); return } window.location.assign('/login') }} error={storageError || error} onAdd={addPersonalItem}
@@ -423,10 +425,11 @@ export default function AtendenteInterface({ userId }: { userId: string }) {
           {trackedFaces.map(face => <div key={face.id} className="pointer-events-none absolute border-2 border-cyan-300" style={{ left: `${face.x * 100}%`, top: `${face.y * 100}%`, width: `${face.width * 100}%`, height: `${face.height * 100}%` }}><span className="absolute -top-5 left-0 whitespace-nowrap bg-black/80 px-1 text-xs text-cyan-200">Rosto {face.id}</span></div>)}
         </div>
         <p role="status" className="p-2 text-xs text-cyan-100">{trackedFaces.length} rosto(s) no enquadramento</p>
-        {!userId && <p className="px-2 pb-2 text-[11px] text-neutral-400">Rastreamento ao vivo, sem identificação e sem salvar fotos. Conversa mantida apenas nesta página.</p>}
+        {!userId && <p className="px-2 pb-2 text-[11px] text-neutral-400">Sem identificação e sem salvamento automático. Conversa mantida apenas nesta página.</p>}
         {faceError && <p role="alert" className="px-2 pb-2 text-xs text-red-300">{faceError}</p>}
       </div>
 
+      {!userId && <div className="absolute bottom-24 right-4 z-50 max-w-56 rounded-xl bg-neutral-950/95"><VisitorPhotoCapture videoRef={videoRef} faces={trackedFaces} active={cameraEnabled} /></div>}
       {activeProfile && (
         <ProfileCard profile={activeProfile} onClose={closeProfile} />
       )}

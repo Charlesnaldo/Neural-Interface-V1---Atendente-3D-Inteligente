@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/prepare-mediapipe.cjs",
+    "prebuild": "node scripts/prepare-mediapipe.cjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -10,6 +12,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.38.0",
+    "@mediapipe/tasks-vision": "1.1.1",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "@react-three/postprocessing": "^3.0.4",

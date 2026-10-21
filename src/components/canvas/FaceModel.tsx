@@ -7,6 +7,7 @@ import { MeshoptDecoder } from 'meshoptimizer'
 import { KTX2Loader } from 'three-stdlib'
 import { useThree, useFrame } from '@react-three/fiber'
 import { blinkEnvelope, frameBlend, morphBlend } from '@/lib/face-motion'
+import type { Gaze } from '@/lib/gaze'
 
 const MODEL_URL = '/models/facecap.glb'
 
@@ -35,6 +36,7 @@ interface FaceModelProps {
   isListening: boolean
   loading: boolean
   faceCoords: { x: number; y: number }
+  gaze?: Gaze | null
   expression: 'neutral' | 'smile' | 'sad'
   inputLevel: number
   audioMetrics?: AudioMetrics
@@ -74,6 +76,7 @@ export default function FaceModel({
   isListening,
   loading,
   faceCoords,
+  gaze,
   expression,
   inputLevel,
   audioMetrics,
@@ -326,7 +329,10 @@ export default function FaceModel({
       // ── EYE LOOK ──────────────────────────────────────────────────────
       let lookX = (fx - 0.5) * 0.75 + sacc.currentX
       let lookY = (fy - 0.5) * -0.65 + sacc.currentY
-      if (loading) {
+      if (gaze) {
+        lookX = THREE.MathUtils.clamp(gaze.x, -1, 1) * 0.65
+        lookY = THREE.MathUtils.clamp(gaze.y, -1, 1) * 0.55
+      } else if (loading) {
         lookX = sacc.currentX - 0.10
         lookY = sacc.currentY + 0.16
       }

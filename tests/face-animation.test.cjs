@@ -90,6 +90,14 @@ test('shared rig advances once per frame and motion does not depend on mesh coun
   assert.deepEqual(two.meshes[0].morphTargetInfluences, two.meshes[1].morphTargetInfluences)
 })
 
+test('camera gaze drives the eyes ahead of thinking and head position', () => {
+  const tracked = simulate({ gaze: { x: 0.7, y: 0.4 }, loading: true, faceCoords: { x: 0, y: 1 } }).weights
+  assert.ok(tracked.eyeLookOut_R > 0.4)
+  assert.ok(tracked.eyeLookUp_L > 0.2)
+  assert.ok(tracked.eyeLookDown_L < 0.001)
+  assert.ok(tracked.eyeLookIn_R < 0.001)
+})
+
 test('blends preserve timing across refresh rates and blink fully closes/reopens', () => {
   const result = fps => { let value = 0; for (let i = 0; i < fps; i++) value = motion.morphBlend(value, 0.8, 0.1, 1 / fps); return value }
   assert.ok(Math.abs(result(30) - result(144)) < 1e-10)

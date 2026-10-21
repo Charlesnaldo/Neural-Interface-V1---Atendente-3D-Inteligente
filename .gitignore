@@ -48,5 +48,6 @@ __pycache__/
 .codex-next-dev*.log
 
 # Local applications, installers and diagnostic scripts
+/public/mediapipe/
 /.local/*
 !/.local/start-voicestudio.cmd

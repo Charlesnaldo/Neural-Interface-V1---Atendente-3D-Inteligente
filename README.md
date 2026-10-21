@@ -90,3 +90,8 @@ Checks: `npm run lint`, `npm run build`, and, from `Zord-vision`,
 Visitor photos: voluntary preview and explicit consent, private administrator
 gallery at `/admin/photos`, and browser-held deletion receipts. Camera permission
 does not automatically save photos. See [the photo flow](docs/visitor-photos.md).
+
+Camera gaze: visitors can enable eye-direction tracking without an account.
+Iris landmarks are processed locally in a worker and drive the avatar's eyes;
+this is an approximate direction, not calibrated screen tracking.
+See [gaze tracking](docs/gaze-tracking.md).

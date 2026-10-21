@@ -87,6 +87,7 @@ export function useVision({ onSpeak, videoRef, enabled = false, userId }: UseVis
       })
       .catch(err => {
         cameraReadyRef.current = false
+        setFaceError('Não foi possível acessar a câmera. Confira a permissão do navegador e tente novamente.')
         console.error('Erro na camera:', err)
         setOfflineState()
       })

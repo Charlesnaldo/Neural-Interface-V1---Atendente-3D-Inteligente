@@ -23,6 +23,8 @@ import Link from 'next/link'
 // --- ESTRUTURA (Business Logic / Hooks) ---
 import { useVoice } from '@/hooks/useVoice'
 import { useVision } from '@/hooks/useVision'
+import { useGaze } from '@/hooks/useGaze'
+import { gazeLabel } from '@/lib/gaze'
 import { useSpeechToText } from '@/hooks/useSpeechToText'
 
 type AudioWindow = Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }
@@ -181,6 +183,7 @@ export default function AtendenteInterface({ userId }: { userId: string }) {
     enabled: cameraEnabled
   })
 
+  const { gaze, status: gazeStatus } = useGaze(videoRef, cameraEnabled)
   useEffect(() => {
     if (recognizedFace) showProfileMention(recognizedFace)
   }, [recognizedFace, showProfileMention])
@@ -412,7 +415,7 @@ export default function AtendenteInterface({ userId }: { userId: string }) {
           <Link href="/admin" className="rounded-xl border border-white/15 bg-neutral-950/90 px-3 py-2 text-sm text-neutral-300">Admin</Link>
         </>}
       </div>
-      {!userId && <p className="absolute left-4 top-16 z-30 max-w-60 rounded-lg bg-black/70 p-2 text-xs text-neutral-400">Câmera opcional para rastreamento ao vivo. Fotos são salvas somente após sua autorização separada.</p>}
+      {!userId && <p className="absolute left-4 top-16 z-30 max-w-60 rounded-lg bg-black/70 p-2 text-xs text-neutral-400">Ative a câmera para acompanhar rosto e olhar, sem login. Fotos são salvas somente após sua autorização separada.</p>}
       {userId && facesOpen && <FaceRegistry faces={faces} online={visionStatus === 'online'} cameraEnabled={cameraEnabled} recognitionAvailable={recognitionAvailable} autoCapture={autoCapture} onAutoCapture={setAutoCapture} onCamera={() => { setCameraEnabled(value => !value); setAutoCapture(false); setVisionReport('') }} command={faceCommand} error={faceError} />}
       {(error || storageError) && !panelOpen && <p role="alert" className="absolute bottom-4 left-4 right-4 z-50 rounded-lg bg-red-950 p-3 text-sm text-red-200">{storageError || error}</p>}
       {panelOpen && <AssistantPanel store={store} ready={ready} saving={saving} onImport={importLocalData} onSignOut={async () => { if (saving) return; requestRef.current?.abort(); stop(); setCameraEnabled(false); setMicEnabled(false); stopListening(); const { error } = await createClient().auth.signOut(); if (error) { setError('Não foi possível sair. Tente novamente.'); return } window.location.assign('/login') }} error={storageError || error} onAdd={addPersonalItem}
@@ -427,6 +430,8 @@ export default function AtendenteInterface({ userId }: { userId: string }) {
           <FaceScanOverlay faces={trackedFaces} />
         </div>
         <p role="status" className="p-2 text-xs text-cyan-100">{trackedFaces.length} rosto(s) no enquadramento</p>
+        <p role="status" className="px-2 pb-2 text-xs text-cyan-200">{gazeStatus === 'error' ? 'Olhar indisponível. Desligue e ligue a câmera para tentar novamente.' : gazeStatus === 'loading' ? 'Preparando rastreamento do olhar…' : gazeLabel(gaze)}</p>
+        <p className="px-2 pb-2 text-[11px] text-neutral-400">Direção aproximada dos olhos, processada neste dispositivo.</p>
         {!userId && <p className="px-2 pb-2 text-[11px] text-neutral-400">Sem identificação e sem salvamento automático. Conversa mantida apenas nesta página.</p>}
         {faceError && <p role="alert" className="px-2 pb-2 text-xs text-red-300">{faceError}</p>}
       </div>
@@ -466,6 +471,7 @@ export default function AtendenteInterface({ userId }: { userId: string }) {
             isListening={isListening}
             loading={loading}
             faceCoords={faceCoords}
+            gaze={gaze}
             expression={expression}
             audioMetrics={audioMetrics}
             audioMetricsLiveRef={audioMetricsLiveRef}

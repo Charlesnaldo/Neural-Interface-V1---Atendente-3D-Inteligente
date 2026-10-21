@@ -3,6 +3,8 @@
 .git
 .next
 node_modules
+public/mediapipe
+public/mediapipe
 Zord-vision/venv
 Zord-vision/.env*
 Zord-vision/data

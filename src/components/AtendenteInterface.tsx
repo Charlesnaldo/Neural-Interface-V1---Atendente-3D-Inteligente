@@ -11,6 +11,11 @@ import { StatusHeader } from './interface/StatusHeader'
 import { FaceDisplay } from './interface/FaceDisplay'
 import { ChatControls } from './interface/ChatControls'
 import { ProfileCard } from './interface/ProfileCard'
+import { AssistantPanel } from './interface/AssistantPanel'
+import { FaceRegistry } from './interface/FaceRegistry'
+import { emptyStore, personalCommand } from '@/lib/assistant-store'
+import { usePersonalStore } from '@/hooks/usePersonalStore'
+import { createClient } from '@/lib/supabase/client'
 
 // --- ESTRUTURA (Business Logic / Hooks) ---
 import { useVoice } from '@/hooks/useVoice'
@@ -66,7 +71,7 @@ const FaceScene = dynamic<FaceSceneProps>(
 )
 
 
-export default function AtendenteInterface() {
+export default function AtendenteInterface({ userId }: { userId: string }) {
   // --- 1. ESTADOS (Estrutura de Dados) ---
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -74,8 +79,12 @@ export default function AtendenteInterface() {
   const [activeProfile, setActiveProfile] = useState<Profile | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const [visionReport, setVisionReport] = useState('')
-  const [, setChatHistory] = useState<ChatMessage[]>([])
-  const chatHistoryRef = useRef<ChatMessage[]>([])
+  const { store, storeRef, ready, saving, storageError, commitStore, importLocalData } = usePersonalStore()
+  const [error, setError] = useState('')
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [cameraEnabled, setCameraEnabled] = useState(false)
+  const [facesOpen, setFacesOpen] = useState(false)
+  const requestRef = useRef<AbortController | null>(null)
   const [micEnabled, setMicEnabled] = useState(false)
   const stopListeningRef = useRef<() => void>(() => {})
 
@@ -131,11 +140,16 @@ export default function AtendenteInterface() {
     } catch (e) { console.error("SFX Error", e) }
   }, [])
 
+  useEffect(() => () => requestRef.current?.abort(), [])
+
   const appendChatMessage = useCallback((message: ChatMessage) => {
-    const next = [...chatHistoryRef.current, message]
-    chatHistoryRef.current = next
-    setChatHistory(next)
-  }, [])
+    commitStore({ ...storeRef.current, history: [...storeRef.current.history, message].slice(-100) })
+  }, [commitStore, storeRef])
+
+  const addPersonalItem = useCallback((kind: 'memory' | 'task', text: string) => {
+    const key = kind === 'memory' ? 'memories' : 'tasks'
+    commitStore({ ...storeRef.current, [key]: [...storeRef.current[key], { id: crypto.randomUUID(), text: text.slice(0, 1000), done: false }].slice(-100) })
+  }, [commitStore, storeRef])
 
   const closeProfile = useCallback(() => setActiveProfile(null), [])
 
@@ -156,9 +170,11 @@ export default function AtendenteInterface() {
     }
   }, [speak, playSFX, showProfileMention, appendChatMessage])
 
-  const { faceCoords, triggerDescription, visionStatus, recognizedFace } = useVision({
+  const { faceCoords, triggerDescription, visionStatus, recognizedFace, faces, faceError, recognitionAvailable, autoCapture, setAutoCapture, faceCommand } = useVision({
     onSpeak: handleVisionDescription,
-    videoRef
+    videoRef,
+    userId,
+    enabled: cameraEnabled
   })
 
   useEffect(() => {
@@ -177,11 +193,12 @@ export default function AtendenteInterface() {
     const normalizedMessage = normalizeText(trimmedMessage)
     const allowWhileSpeaking = options?.allowWhileSpeaking ?? false
 
-    if (!trimmedMessage) return
+    if (!trimmedMessage || !ready || requestRef.current) return
 
     if (isVoice && includesAny(normalizedMessage, STOP_VOICE_PHRASES)) {
       stop()
       stopListeningRef.current()
+      setMicEnabled(false)
       setLoading(false)
       setInput('')
       return
@@ -199,11 +216,37 @@ export default function AtendenteInterface() {
       return
     }
 
+    setError('')
     playSFX('process')
 
-    const previousHistory = chatHistoryRef.current
+    const previousHistory = storeRef.current.history
     appendChatMessage({ role: 'user', content: trimmedMessage })
     showProfileMention(trimmedMessage)
+
+    const cameraCommand = normalizedMessage.replace(/[.!?]+$/, '').match(/^(?:zord[, ]+)?(acione|acionar|ligue|ligar|ative|ativar|desligue|desligar|desative|desativar) (?:a )?camera$/)
+    if (cameraCommand) {
+      const enable = !cameraCommand[1].startsWith('des')
+      setCameraEnabled(enable)
+      setAutoCapture(false)
+      setVisionReport('')
+      setFacesOpen(enable)
+      setPanelOpen(false)
+      const answer = enable ? 'Vou solicitar acesso à câmera. Você pode cadastrar rostos no painel.' : 'Câmera desligada.'
+      appendChatMessage({ role: 'assistant', content: answer })
+      speak(answer)
+      setInput('')
+      return
+    }
+
+    const command = personalCommand(trimmedMessage)
+    if (command) {
+      addPersonalItem(command.kind, command.text)
+      const answer = command.kind === 'memory' ? `Guardei na memória: ${command.text}` : `Tarefa criada: ${command.text}`
+      appendChatMessage({ role: 'assistant', content: answer })
+      speak(answer)
+      setInput('')
+      return
+    }
 
     // Controle de Expressão Manual via Gatilho
     if (includesAny(normalizedMessage, ['sorri', 'feliz', 'alegre'])) {
@@ -227,6 +270,9 @@ export default function AtendenteInterface() {
     }
 
     setLoading(true)
+    const controller = new AbortController()
+    requestRef.current = controller
+    const timeout = window.setTimeout(() => controller.abort(), 45000)
     try {
       const visionPayload = {
         description: visionReport || null,
@@ -235,14 +281,17 @@ export default function AtendenteInterface() {
       }
       const res = await fetch('/api/chat', {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: trimmedMessage,
           history: previousHistory,
+          personalContext: { memories: storeRef.current.memories.map(item => item.text), tasks: storeRef.current.tasks.filter(item => !item.done).map(item => item.text) },
           visionContext: visionPayload,
         }),
       })
       const data = await res.json() as { text?: string; error?: string }
+      if (controller.signal.aborted) return
       if (!res.ok) {
         throw new Error(data.error || 'Falha no provedor de chat')
       }
@@ -256,12 +305,14 @@ export default function AtendenteInterface() {
         speak(responseText)
       }
     } catch (err) {
-      console.error("Erro neural:", err)
+      setError(err instanceof Error && err.name === 'AbortError' ? 'Resposta cancelada ou tempo limite excedido. Tente novamente.' : 'Não foi possível conversar agora. Verifique a conexão e tente novamente.')
     } finally {
+      window.clearTimeout(timeout)
+      requestRef.current = null
       setLoading(false)
       setInput('')
     }
-  }, [loading, isSpeaking, speak, stop, triggerDescription, playSFX, visionReport, recognizedFace, visionStatus, showProfileMention, appendChatMessage])
+  }, [ready, addPersonalItem, loading, isSpeaking, speak, stop, triggerDescription, playSFX, visionReport, recognizedFace, visionStatus, showProfileMention, appendChatMessage, setAutoCapture, storeRef])
 
   const { isListening, inputLevel, startListening, stopListening } = useSpeechToText(
     (text) => processMessage(text, true),
@@ -323,6 +374,11 @@ export default function AtendenteInterface() {
 
   const handleMicAction = () => {
     unlockAudio()
+    if (micEnabled && !isSpeaking) {
+      setMicEnabled(false)
+      stopListening()
+      return
+    }
     setMicEnabled(true)
     // DUPLEX: Se eu clicar para falar e ele estiver falando, ele cala a boca na hora
     if (isSpeaking) {
@@ -342,7 +398,19 @@ export default function AtendenteInterface() {
   // --- 3. COMPOSIÇÃO (Designer) ---
   return (
     <main className="h-screen w-full bg-black overflow-hidden flex items-center justify-center relative">
-      <video ref={videoRef} autoPlay playsInline className="hidden" />
+      <div className="absolute left-4 top-5 z-50 flex gap-2">
+        <button type="button" aria-expanded={panelOpen} onClick={() => { setPanelOpen(value => !value); setFacesOpen(false) }} className="rounded-xl border border-white/15 bg-neutral-950/90 px-4 py-2 text-sm text-cyan-200">{panelOpen ? 'Fechar painel' : 'Meu assistente'}</button>
+        <button type="button" aria-expanded={facesOpen} onClick={() => { setFacesOpen(value => !value); setPanelOpen(false) }} className="rounded-xl border border-white/15 bg-neutral-950/90 px-4 py-2 text-sm text-cyan-200">{facesOpen ? 'Fechar rostos' : 'Rostos'}</button>
+      </div>
+      {facesOpen && <FaceRegistry faces={faces} online={visionStatus === 'online'} cameraEnabled={cameraEnabled} recognitionAvailable={recognitionAvailable} autoCapture={autoCapture} onAutoCapture={setAutoCapture} onCamera={() => { setCameraEnabled(value => !value); setAutoCapture(false); setVisionReport('') }} command={faceCommand} error={faceError} />}
+      {(error || storageError) && !panelOpen && <p role="alert" className="absolute bottom-4 left-4 right-4 z-50 rounded-lg bg-red-950 p-3 text-sm text-red-200">{storageError || error}</p>}
+      {panelOpen && <AssistantPanel store={store} ready={ready} saving={saving} onImport={importLocalData} onSignOut={async () => { if (saving) return; requestRef.current?.abort(); stop(); setCameraEnabled(false); setMicEnabled(false); stopListening(); const { error } = await createClient().auth.signOut(); if (error) { setError('Não foi possível sair. Tente novamente.'); return } window.location.assign('/login') }} error={storageError || error} onAdd={addPersonalItem}
+        onRemove={(kind, id) => commitStore({ ...storeRef.current, [kind]: storeRef.current[kind].filter(item => item.id !== id) })}
+        onToggle={id => commitStore({ ...storeRef.current, tasks: storeRef.current.tasks.map(item => item.id === id ? { ...item, done: !item.done } : item) })}
+        onClear={() => { requestRef.current?.abort(); stop(); setMicEnabled(false); stopListening(); commitStore(emptyStore()); setVisionReport(''); setActiveProfile(null) }}
+        cameraEnabled={cameraEnabled} onCamera={() => { setCameraEnabled(value => !value); setAutoCapture(false); setVisionReport('') }}
+        micEnabled={micEnabled} onMicOff={() => { setMicEnabled(false); stopListening() }} />}
+      <video ref={videoRef} autoPlay playsInline muted aria-label="Prévia da câmera" className={cameraEnabled && facesOpen ? 'absolute bottom-4 left-4 z-50 h-20 w-28 rounded-xl border border-cyan-400/30 object-cover sm:bottom-28 sm:h-40 sm:w-56' : 'hidden'} />
 
       {activeProfile && (
         <ProfileCard profile={activeProfile} onClose={closeProfile} />
@@ -359,11 +427,11 @@ export default function AtendenteInterface() {
         <StatusHeader
           isSpeaking={isSpeaking}
           isListening={isListening}
-          loading={loading}
+          loading={loading || !ready}
         />
         {visionStatus !== 'online' && (
           <div className="absolute top-6 right-6 z-30 px-3 py-1 rounded-full border border-white/30 bg-neutral-900/70 text-[10px] tracking-[0.3em] uppercase text-orange-400">
-            {visionStatus === 'connecting' ? 'Visão carregando...' : 'Visão offline'}
+            {!cameraEnabled ? 'Câmera desligada' : visionStatus === 'connecting' ? 'Visão carregando...' : 'Visão offline'}
           </div>
         )}
         {recognizedFace && (

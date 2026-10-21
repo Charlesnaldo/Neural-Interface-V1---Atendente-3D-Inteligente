@@ -35,6 +35,8 @@ export const ChatControls = ({
             >
                 <div className="flex items-center gap-4 px-4 py-2">
                     <input
+                        aria-label="Mensagem para o Zord"
+                        maxLength={8000}
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}

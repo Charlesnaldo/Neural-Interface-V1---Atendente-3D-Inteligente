@@ -1,0 +1,11 @@
+.env*
+.local
+.git
+.next
+node_modules
+Zord-vision/venv
+Zord-vision/.env*
+Zord-vision/data
+Zord-vision/known_faces
+**/__pycache__
+Zord-vision/yolov8n.pt

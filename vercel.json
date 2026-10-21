@@ -1,0 +1,23 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "web": {
+      "root": ".",
+      "framework": "nextjs",
+      "buildCommand": "npm run build"
+    },
+    "vision": {
+      "root": "Zord-vision",
+      "entrypoint": "main:app",
+      "buildCommand": "python download_face_models.py",
+      "functions": {
+        "main.py": { "includeFiles": "models/*.onnx", "maxDuration": 300 }
+      }
+    }
+  },
+  "rewrites": [
+    { "source": "/ws/vision", "destination": { "service": "vision" } },
+    { "source": "/health", "destination": { "service": "vision" } },
+    { "source": "/(.*)", "destination": { "service": "web" } }
+  ]
+}

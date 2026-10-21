@@ -52,6 +52,16 @@ Chat requires `GROQ_API_KEY`; `GROQ_MODEL` optionally overrides the default
 
 ## Supabase and authentication
 
+The homepage is public: visitors can chat and enable live tracking without accounts.
+Their conversations stay in page memory and tracking does not save photos or identify
+people. All detected faces get temporary numbers and boxes; these are not identities.
+The application does not search the internet to identify people from face photos.
+
+Administration is at `/admin`, with login at `/login`. Set server-only `ADMIN_EMAILS`
+to the authorized administrator email. The admin account must confirm its email.
+Public signup through the application is restricted to that configured email.
+Visitor camera permission is independent of any consent to save a photograph.
+
 Project: **Zord**, ref `ycibrrmtcgxytjnydveh` (São Paulo). Fill `.env.local` using
 `.env.example` and the publishable key from the Supabase Connect dialog. Never put
 secret/service-role keys in `NEXT_PUBLIC_*` variables. Login is at `/login`.

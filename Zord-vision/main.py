@@ -213,6 +213,29 @@ def get_face_coordinates(image):
     except: pass
     return None, None
 
+
+def track_faces(image, previous, sequence):
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    boxes = face_recognition.face_locations(rgb) if FACE_RECOGNITION_AVAILABLE else []
+    height, width = image.shape[:2]
+    remaining = list(previous)
+    tracks = []
+    for top, right, bottom, left in boxes:
+        x, y = max(0, left / width), max(0, top / height)
+        w, h = min(1 - x, (right-left) / width), min(1 - y, (bottom-top) / height)
+        if w <= 0 or h <= 0:
+            continue
+        candidate = min(remaining, key=lambda item: (item['x']+item['width']/2-x-w/2)**2 + (item['y']+item['height']/2-y-h/2)**2, default=None)
+        distance = ((candidate['x']+candidate['width']/2-x-w/2)**2 + (candidate['y']+candidate['height']/2-y-h/2)**2) if candidate else 1
+        if candidate and distance < 0.04:
+            identifier = candidate['id']
+            remaining.remove(candidate)
+        else:
+            sequence += 1
+            identifier = sequence
+        tracks.append({'id': identifier, 'x': x, 'y': y, 'width': w, 'height': h})
+    return tracks, sequence
+
 async def analyze_with_gemini(data_from_socket):
     try:
         if client is None:
@@ -265,15 +288,20 @@ async def websocket_endpoint(websocket: WebSocket):
         return
     await websocket.accept()
     context_token = None
+    tracking_only = False
+    tracks, track_sequence = [], 0
     if CLOUD_VISION:
         try:
             first = json.loads(await asyncio.wait_for(websocket.receive_text(), timeout=10))
+            if first.get('action') == 'track_only':
+                tracking_only = True
             token = first.get('token', '')
-            if first.get('action') != 'authenticate' or not isinstance(token, str) or not 1 <= len(token) <= 8192:
+            if not tracking_only and (first.get('action') != 'authenticate' or not isinstance(token, str) or not 1 <= len(token) <= 8192):
                 raise ValueError('Autenticação necessária.')
-            registry = CloudFaceStore(SUPABASE_URL, SUPABASE_KEY, token)
-            context_token = store_context.set(registry)
-            await websocket.send_json({'type': 'authenticated'})
+            if not tracking_only:
+                registry = CloudFaceStore(SUPABASE_URL, SUPABASE_KEY, token)
+                context_token = store_context.set(registry)
+            await websocket.send_json({'type': 'authenticated', 'mode': 'tracking' if tracking_only else 'private'})
         except (ValueError, PermissionError, KeyError, TypeError, AttributeError, asyncio.TimeoutError, WebSocketDisconnect):
             await websocket.close(code=1008)
             return
@@ -291,6 +319,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 try:
                     command = json.loads(data)
                     action = command.get('action')
+                    if action == 'track_only' and not CLOUD_VISION:
+                        tracking_only = True
+                        await websocket.send_json({'type': 'authenticated', 'mode': 'tracking'})
+                        continue
+                    if tracking_only:
+                        await websocket.send_json({'type': 'face_error', 'error': 'O rastreamento público não acessa cadastros nem salva fotos.'})
+                        continue
                     if action == 'list_faces':
                         await websocket.send_json(face_gallery())
                     elif action in ('capture_face', 'observe_face'):
@@ -317,6 +352,9 @@ async def websocket_endpoint(websocket: WebSocket):
             # 1. TESTE DE COMANDO DE VISÃO (DESCRIÇÃO)
             # Usamos "in" em vez de "startswith" para ser mais flexível
             if "DESCRIBE:" in data:
+                if tracking_only:
+                    await websocket.send_json({'type': 'face_error', 'error': 'Modo público: somente rastreamento ao vivo.'})
+                    continue
                 print(">>> ZORD: COMANDO DE VISÃO IDENTIFICADO!")
                 # Limpamos a string para pegar apenas o que interessa
                 image_data = data.split("DESCRIBE:")[1] 
@@ -343,14 +381,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
                     if frame is not None:
-                        x, y = get_face_coordinates(frame)
-                        if x is not None:
-                            await websocket.send_json({
-                                "type": "tracking", 
-                                "x": x, 
-                                "y": y, 
-                                "detected": True
-                            })
+                        tracks, track_sequence = track_faces(frame, tracks, track_sequence)
+                        first = tracks[0] if tracks else None
+                        await websocket.send_json({
+                            'type': 'tracking', 'faces': tracks, 'detected': bool(tracks),
+                            'x': first['x']+first['width']/2 if first else 0.5,
+                            'y': first['y']+first['height']/2 if first else 0.5,
+                        })
                 except:
                     # Ignora mensagens malformadas que não sejam de rastreio
                     pass

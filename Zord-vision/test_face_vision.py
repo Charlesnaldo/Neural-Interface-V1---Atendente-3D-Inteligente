@@ -68,6 +68,22 @@ class FaceVisionTests(unittest.TestCase):
         self.assertEqual(socket.closed, 1008)
         self.assertEqual(socket.messages, [])
 
+    def test_public_tracking_cannot_list_or_save_faces(self):
+        socket = Socket([{'action': 'track_only'}, {'action': 'list_faces'}, {'action': 'capture_face', 'image': 'invalid'}])
+        with patch.object(main, 'CLOUD_VISION', True), patch.object(main, 'CloudFaceStore') as database:
+            asyncio.run(main.websocket_endpoint(socket))
+        database.assert_not_called()
+        self.assertEqual(socket.messages[0]['mode'], 'tracking')
+        self.assertEqual([message['type'] for message in socket.messages[1:]], ['face_error', 'face_error'])
+
+    def test_all_visible_faces_have_temporary_track_ids(self):
+        frame = np.zeros((240, 320, 3), dtype=np.uint8)
+        with patch.object(main.face_recognition, 'face_locations', return_value=[(10,80,80,10),(30,240,120,170)]):
+            first, sequence = main.track_faces(frame, [], 0)
+            second, _ = main.track_faces(frame, first, sequence)
+        self.assertEqual(len(first), 2)
+        self.assertEqual([item['id'] for item in first], [item['id'] for item in second])
+
     def test_simultaneous_cloud_connections_have_separate_registries(self):
         from types import SimpleNamespace
         def registry(url, key, token):

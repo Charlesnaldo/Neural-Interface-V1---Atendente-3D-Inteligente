@@ -11,12 +11,14 @@ interface UseVisionProps {
 
 type VisionStatus = 'connecting' | 'online' | 'offline'
 export type SavedFace = { id: string; name: string; photo: string; created_at: string; last_seen: string }
+export type TrackedFace = { id: number; x: number; y: number; width: number; height: number }
 
 interface VisionTrackingPayload {
   type?: 'tracking'
   x?: number
   y?: number
   detected?: boolean
+  faces?: TrackedFace[]
 }
 
 interface VisionDescriptionPayload {
@@ -27,6 +29,7 @@ interface VisionDescriptionPayload {
 
 export function useVision({ onSpeak, videoRef, enabled = false, userId }: UseVisionProps) {
   const [faceCoords, setFaceCoords] = useState({ x: 0.5, y: 0.5 })
+  const [trackedFaces, setTrackedFaces] = useState<TrackedFace[]>([])
   const [isVisionLoading, setIsVisionLoading] = useState(false)
   const [recognizedFace, setRecognizedFace] = useState<string | null>(null)
   const [visionStatus, setVisionStatus] = useState<VisionStatus>('connecting')
@@ -62,6 +65,7 @@ export function useVision({ onSpeak, videoRef, enabled = false, userId }: UseVis
     let disposed = false
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
     let reconnectAttempts = 0
+    let greeted = false
     connectedRef.current = false
 
     navigator.mediaDevices
@@ -89,8 +93,8 @@ export function useVision({ onSpeak, videoRef, enabled = false, userId }: UseVis
 
     if (!orbitalCanvasRef.current) {
       orbitalCanvasRef.current = document.createElement('canvas')
-      orbitalCanvasRef.current.width = 160
-      orbitalCanvasRef.current.height = 120
+      orbitalCanvasRef.current.width = 320
+      orbitalCanvasRef.current.height = 240
     }
 
     if (!scanCanvasRef.current) {
@@ -109,6 +113,10 @@ export function useVision({ onSpeak, videoRef, enabled = false, userId }: UseVis
       socket.onopen = async () => {
         if (disposed) return
         try {
+          if (!userId) {
+            socket.send(JSON.stringify({ action: 'track_only' }))
+            return
+          }
           const { data: { session }, error } = await createClient().auth.getSession()
           if (disposed || socket.readyState !== WebSocket.OPEN) return
           if (error || !session || session.user.id !== userId) {
@@ -154,6 +162,11 @@ export function useVision({ onSpeak, videoRef, enabled = false, userId }: UseVis
           const data: VisionTrackingPayload & VisionDescriptionPayload = payload
 
           if (data.type === 'tracking' || data.detected) {
+            setTrackedFaces(data.faces ?? [])
+            if (!userId && !greeted && data.faces?.length) {
+              greeted = true
+              onSpeakRef.current('Olá! Como prefere ser chamado?')
+            }
             if (typeof data.x === 'number' && typeof data.y === 'number') {
               setFaceCoords({ x: data.x, y: data.y })
             }
@@ -205,7 +218,7 @@ export function useVision({ onSpeak, videoRef, enabled = false, userId }: UseVis
       const ctx = orbitalCanvas.getContext('2d', { willReadFrequently: true })
       if (!ctx) return
 
-      ctx.drawImage(video, 0, 0, 160, 120)
+      ctx.drawImage(video, 0, 0, 320, 240)
       socket.send(orbitalCanvas.toDataURL('image/jpeg', 0.4))
       if (recognitionRef.current && Date.now() - lastCapture > 5000 && scanCanvasRef.current) {
         lastCapture = Date.now()
@@ -255,6 +268,10 @@ export function useVision({ onSpeak, videoRef, enabled = false, userId }: UseVis
   }, [enabled, videoRef])
 
   const triggerDescription = useCallback(() => {
+    if (!userId && connectedRef.current) {
+      onSpeakRef.current(`Estou acompanhando ${trackedFaces.length} rosto(s) no enquadramento. Você pode me dizer como prefere ser chamado.`)
+      return true
+    }
     const socket = socketRef.current
     const video = videoRef.current
     const scanCanvas = scanCanvasRef.current
@@ -277,9 +294,10 @@ export function useVision({ onSpeak, videoRef, enabled = false, userId }: UseVis
     console.warn('Visao indisponivel para varredura.')
     setIsVisionLoading(false)
     return false
-  }, [videoRef])
+  }, [videoRef, userId, trackedFaces.length])
 
   return {
+    trackedFaces: enabled ? trackedFaces : [],
     faces, faceError, recognitionAvailable, autoCapture, setAutoCapture, faceCommand,
     faceCoords,
     isVisionLoading,

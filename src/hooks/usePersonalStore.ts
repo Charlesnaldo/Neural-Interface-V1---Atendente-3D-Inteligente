@@ -2,11 +2,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { STORAGE_KEY, emptyStore, parseStore, type AssistantStore } from '@/lib/assistant-store'
 
-export function usePersonalStore() {
+export function usePersonalStore(cloud = true) {
   const [store, setStore] = useState<AssistantStore>(emptyStore)
   const storeRef = useRef<AssistantStore>(emptyStore())
-  const [ready, setReady] = useState(false)
-  const readyRef = useRef(false)
+  const [ready, setReady] = useState(!cloud)
+  const readyRef = useRef(!cloud)
   const [saving, setSaving] = useState(false)
   const [storageError, setStorageError] = useState('')
   const revision = useRef(0)
@@ -15,6 +15,7 @@ export function usePersonalStore() {
   const blocked = useRef(false)
 
   useEffect(() => {
+    if (!cloud) return
     const controller = new AbortController()
     void (async () => {
       try {
@@ -33,12 +34,13 @@ export function usePersonalStore() {
       }
     })()
     return () => { controller.abort(); readyRef.current = false }
-  }, [])
+  }, [cloud])
 
   const commitStore = useCallback((next: AssistantStore) => {
     if (!readyRef.current || blocked.current) return
     storeRef.current = next
     setStore(next)
+    if (!cloud) return
     pending.current += 1
     setSaving(true)
     queue.current = queue.current.then(async () => {
@@ -60,7 +62,7 @@ export function usePersonalStore() {
       pending.current -= 1
       setSaving(pending.current > 0)
     })
-  }, [])
+  }, [cloud])
 
   const importLocalData = useCallback(() => {
     if (storeRef.current.history.length || storeRef.current.memories.length || storeRef.current.tasks.length) return

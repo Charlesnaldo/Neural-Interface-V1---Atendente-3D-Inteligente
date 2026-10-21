@@ -16,6 +16,7 @@ import { FaceRegistry } from './interface/FaceRegistry'
 import { emptyStore, personalCommand } from '@/lib/assistant-store'
 import { usePersonalStore } from '@/hooks/usePersonalStore'
 import { createClient } from '@/lib/supabase/client'
+import Link from 'next/link'
 
 // --- ESTRUTURA (Business Logic / Hooks) ---
 import { useVoice } from '@/hooks/useVoice'
@@ -79,7 +80,7 @@ export default function AtendenteInterface({ userId }: { userId: string }) {
   const [activeProfile, setActiveProfile] = useState<Profile | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const [visionReport, setVisionReport] = useState('')
-  const { store, storeRef, ready, saving, storageError, commitStore, importLocalData } = usePersonalStore()
+  const { store, storeRef, ready, saving, storageError, commitStore, importLocalData } = usePersonalStore(Boolean(userId))
   const [error, setError] = useState('')
   const [panelOpen, setPanelOpen] = useState(false)
   const [cameraEnabled, setCameraEnabled] = useState(false)
@@ -170,7 +171,7 @@ export default function AtendenteInterface({ userId }: { userId: string }) {
     }
   }, [speak, playSFX, showProfileMention, appendChatMessage])
 
-  const { faceCoords, triggerDescription, visionStatus, recognizedFace, faces, faceError, recognitionAvailable, autoCapture, setAutoCapture, faceCommand } = useVision({
+  const { faceCoords, trackedFaces, triggerDescription, visionStatus, recognizedFace, faces, faceError, recognitionAvailable, autoCapture, setAutoCapture, faceCommand } = useVision({
     onSpeak: handleVisionDescription,
     videoRef,
     userId,
@@ -399,10 +400,16 @@ export default function AtendenteInterface({ userId }: { userId: string }) {
   return (
     <main className="h-screen w-full bg-black overflow-hidden flex items-center justify-center relative">
       <div className="absolute left-4 top-5 z-50 flex gap-2">
-        <button type="button" aria-expanded={panelOpen} onClick={() => { setPanelOpen(value => !value); setFacesOpen(false) }} className="rounded-xl border border-white/15 bg-neutral-950/90 px-4 py-2 text-sm text-cyan-200">{panelOpen ? 'Fechar painel' : 'Meu assistente'}</button>
-        <button type="button" aria-expanded={facesOpen} onClick={() => { setFacesOpen(value => !value); setPanelOpen(false) }} className="rounded-xl border border-white/15 bg-neutral-950/90 px-4 py-2 text-sm text-cyan-200">{facesOpen ? 'Fechar rostos' : 'Rostos'}</button>
+        {userId ? <>
+          <button type="button" aria-expanded={panelOpen} onClick={() => { setPanelOpen(value => !value); setFacesOpen(false) }} className="rounded-xl border border-white/15 bg-neutral-950/90 px-4 py-2 text-sm text-cyan-200">{panelOpen ? 'Fechar painel' : 'Meu assistente'}</button>
+          <button type="button" aria-expanded={facesOpen} onClick={() => { setFacesOpen(value => !value); setPanelOpen(false) }} className="rounded-xl border border-white/15 bg-neutral-950/90 px-4 py-2 text-sm text-cyan-200">{facesOpen ? 'Fechar rostos' : 'Rostos'}</button>
+        </> : <>
+          <button type="button" aria-pressed={cameraEnabled} onClick={() => { unlockAudio(); setCameraEnabled(value => !value) }} className="rounded-xl border border-white/15 bg-neutral-950/90 px-3 py-2 text-sm text-cyan-200">{cameraEnabled ? 'Desligar câmera' : 'Rastrear rostos'}</button>
+          <Link href="/admin" className="rounded-xl border border-white/15 bg-neutral-950/90 px-3 py-2 text-sm text-neutral-300">Admin</Link>
+        </>}
       </div>
-      {facesOpen && <FaceRegistry faces={faces} online={visionStatus === 'online'} cameraEnabled={cameraEnabled} recognitionAvailable={recognitionAvailable} autoCapture={autoCapture} onAutoCapture={setAutoCapture} onCamera={() => { setCameraEnabled(value => !value); setAutoCapture(false); setVisionReport('') }} command={faceCommand} error={faceError} />}
+      {!userId && <p className="absolute left-4 top-16 z-30 max-w-60 rounded-lg bg-black/70 p-2 text-xs text-neutral-400">Câmera opcional: imagens processadas ao vivo pelo Zord para rastrear rostos, sem identificação e sem guardar fotos.</p>}
+      {userId && facesOpen && <FaceRegistry faces={faces} online={visionStatus === 'online'} cameraEnabled={cameraEnabled} recognitionAvailable={recognitionAvailable} autoCapture={autoCapture} onAutoCapture={setAutoCapture} onCamera={() => { setCameraEnabled(value => !value); setAutoCapture(false); setVisionReport('') }} command={faceCommand} error={faceError} />}
       {(error || storageError) && !panelOpen && <p role="alert" className="absolute bottom-4 left-4 right-4 z-50 rounded-lg bg-red-950 p-3 text-sm text-red-200">{storageError || error}</p>}
       {panelOpen && <AssistantPanel store={store} ready={ready} saving={saving} onImport={importLocalData} onSignOut={async () => { if (saving) return; requestRef.current?.abort(); stop(); setCameraEnabled(false); setMicEnabled(false); stopListening(); const { error } = await createClient().auth.signOut(); if (error) { setError('Não foi possível sair. Tente novamente.'); return } window.location.assign('/login') }} error={storageError || error} onAdd={addPersonalItem}
         onRemove={(kind, id) => commitStore({ ...storeRef.current, [kind]: storeRef.current[kind].filter(item => item.id !== id) })}
@@ -410,7 +417,15 @@ export default function AtendenteInterface({ userId }: { userId: string }) {
         onClear={() => { requestRef.current?.abort(); stop(); setMicEnabled(false); stopListening(); commitStore(emptyStore()); setVisionReport(''); setActiveProfile(null) }}
         cameraEnabled={cameraEnabled} onCamera={() => { setCameraEnabled(value => !value); setAutoCapture(false); setVisionReport('') }}
         micEnabled={micEnabled} onMicOff={() => { setMicEnabled(false); stopListening() }} />}
-      <video ref={videoRef} autoPlay playsInline muted aria-label="Prévia da câmera" className={cameraEnabled && facesOpen ? 'absolute bottom-4 left-4 z-50 h-20 w-28 rounded-xl border border-cyan-400/30 object-cover sm:bottom-28 sm:h-40 sm:w-56' : 'hidden'} />
+      <div className={cameraEnabled ? 'absolute bottom-24 left-4 z-50 w-56 overflow-hidden rounded-xl border border-cyan-400/40 bg-black sm:w-72' : 'hidden'}>
+        <div className="relative aspect-[4/3]">
+          <video ref={videoRef} autoPlay playsInline muted aria-label="Rastreamento da câmera" className="h-full w-full object-fill" />
+          {trackedFaces.map(face => <div key={face.id} className="pointer-events-none absolute border-2 border-cyan-300" style={{ left: `${face.x * 100}%`, top: `${face.y * 100}%`, width: `${face.width * 100}%`, height: `${face.height * 100}%` }}><span className="absolute -top-5 left-0 whitespace-nowrap bg-black/80 px-1 text-xs text-cyan-200">Rosto {face.id}</span></div>)}
+        </div>
+        <p role="status" className="p-2 text-xs text-cyan-100">{trackedFaces.length} rosto(s) no enquadramento</p>
+        {!userId && <p className="px-2 pb-2 text-[11px] text-neutral-400">Rastreamento ao vivo, sem identificação e sem salvar fotos. Conversa mantida apenas nesta página.</p>}
+        {faceError && <p role="alert" className="px-2 pb-2 text-xs text-red-300">{faceError}</p>}
+      </div>
 
       {activeProfile && (
         <ProfileCard profile={activeProfile} onClose={closeProfile} />

@@ -6,6 +6,7 @@ import { useGLTF, useAnimations } from '@react-three/drei'
 import { MeshoptDecoder } from 'meshoptimizer'
 import { KTX2Loader } from 'three-stdlib'
 import { useThree, useFrame } from '@react-three/fiber'
+import { blinkEnvelope, frameBlend, morphBlend } from '@/lib/face-motion'
 
 const MODEL_URL = '/models/facecap.glb'
 
@@ -52,15 +53,16 @@ function damp(current: number, target: number, speed: number, dt: number) {
 }
 
 /** Lerp morph influence with guard for missing keys. */
-function setMorph(
+function writeMorph(
   influences: number[],
   dict: { [key: string]: number },
   key: string,
   target: number,
-  alpha: number
+  alpha: number,
+  dt: number
 ) {
   if (dict[key] === undefined) return
-  influences[dict[key]] = THREE.MathUtils.lerp(influences[dict[key]], target, alpha)
+  influences[dict[key]] = morphBlend(influences[dict[key]], target, alpha, dt)
 }
 
 // ---------------------------------------------------------------------------
@@ -91,13 +93,14 @@ export default function FaceModel({
 
   const groupRef = useRef<THREE.Group>(null)
   const headMeshesRef = useRef<THREE.Mesh[]>([])
+  const rigRef = useRef({ dictionary: {} as Record<string, number>, influences: [] as number[] })
   // Ref local — usada apenas quando audioMetricsLiveRef não é fornecida.
   const localMetricsRef = useRef<AudioMetrics>(audioMetrics ?? ZERO_METRICS)
   // Aponta para a ref viva do useVoice se disponível, senão usa a local.
   const audioMetricsRef = audioMetricsLiveRef ?? localMetricsRef
 
   // ── Blink ──────────────────────────────────────────────────────────────
-  const blinkState = useRef({ value: 0, active: false, timer: timingSeed.blink })
+  const blinkState = useRef({ value: 0, active: false, elapsed: 0, timer: timingSeed.blink })
   const microBlinkState = useRef({ value: 0, active: false, timer: timingSeed.microBlink })
 
   // ── Eye saccade ────────────────────────────────────────────────────────
@@ -127,7 +130,7 @@ export default function FaceModel({
   const breathState = useRef({ amplitude: 0.011, phase: timingSeed.breathPhase })
 
   // ── Expression ─────────────────────────────────────────────────────────
-  const expressionState = useRef({ smile: 0.3, frown: 0, browSad: 0, browFocus: 0, cheek: 0 })
+  const expressionState = useRef({ smile: 0.06, frown: 0, browSad: 0, browFocus: 0, cheek: 0 })
 
   // ── Viseme (smoothed phoneme targets) ──────────────────────────────────
   //
@@ -173,6 +176,8 @@ export default function FaceModel({
           headMeshesRef.current.push(mesh)
         }
       })
+      const keys = [...new Set(headMeshesRef.current.flatMap(mesh => Object.keys(mesh.morphTargetDictionary ?? {})))]
+      rigRef.current = { dictionary: Object.fromEntries(keys.map((key, index) => [key, index])), influences: keys.map(() => 0) }
     }
   }, [scene, actions])
 
@@ -191,10 +196,11 @@ export default function FaceModel({
     const fx  = faceCoords?.x ?? 0.5
     const fy  = faceCoords?.y ?? 0.5
     const m   = audioMetricsRef.current
+    const setMorph = (inf: number[], dict: Record<string, number>, key: string, target: number, alpha: number) => writeMorph(inf, dict, key, target, alpha, dt)
 
     // ── Global voice energy scalars ──────────────────────────────────────
     const amp          = isSpeaking ? THREE.MathUtils.clamp(m.amplitude, 0, 1)     : 0
-    const voiceEnergy  = isSpeaking ? THREE.MathUtils.clamp(0.2 + amp * 0.7, 0, 1) : 0
+    const voiceEnergy  = isSpeaking ? THREE.MathUtils.clamp(amp * 0.85, 0, 1) : 0
     const voiceSharp   = isSpeaking ? THREE.MathUtils.clamp(m.sharpness * 1.1, 0, 1) : 0
     const listenEnergy = isListening && !isSpeaking
       ? THREE.MathUtils.clamp(inputLevel * 1.6, 0, 1) : 0
@@ -206,10 +212,11 @@ export default function FaceModel({
     blink.timer -= dt
     if (blink.timer <= 0 && !blink.active) {
       blink.active = true
-      blink.timer  = 0.08
+      blink.elapsed = 0
     }
-    blink.value = damp(blink.value, blink.active ? 1 : 0, 0.5, dt * 60)
-    if (blink.active && blink.value > 0.92) {
+    if (blink.active) blink.elapsed += dt
+    blink.value = blink.active ? blinkEnvelope(blink.elapsed) : 0
+    if (blink.active && blink.elapsed >= 0.18) {
       blink.active = false
       blink.timer  = Math.random() * 3 + 1.5
     }
@@ -232,12 +239,12 @@ export default function FaceModel({
     const sacc = saccadeState.current
     sacc.timer -= dt
     if (sacc.timer <= 0) {
-      sacc.targetX = (Math.random() - 0.5) * 0.4
-      sacc.targetY = (Math.random() - 0.5) * 0.28
+      sacc.targetX = (Math.random() - 0.5) * (isListening ? 0.10 : 0.22)
+      sacc.targetY = (Math.random() - 0.5) * 0.12
       sacc.timer   = Math.random() * 1.4 + 0.55
     }
-    sacc.currentX = damp(sacc.currentX, sacc.targetX, 0.075, dt * 60)
-    sacc.currentY = damp(sacc.currentY, sacc.targetY, 0.08,  dt * 60)
+    sacc.currentX = damp(sacc.currentX, sacc.targetX, 22, dt)
+    sacc.currentY = damp(sacc.currentY, sacc.targetY, 22, dt)
 
     // ────────────────────────────────────────────────────────────────────
     // HEAD IDLE
@@ -259,10 +266,10 @@ export default function FaceModel({
     gesture.timer -= dt
     if (gesture.timer <= 0) {
       if (isSpeaking) {
-        gesture.nodTarget  = (Math.random() * 0.06 + 0.015) * voiceEnergy
-        gesture.tiltTarget = (Math.random() - 0.5) * 0.08
+        gesture.nodTarget  = (Math.random() - 0.5) * 0.045 * voiceEnergy
+        gesture.tiltTarget = (Math.random() - 0.5) * 0.04 * voiceEnergy
         gesture.leanTarget = voiceEnergy * 0.025
-        gesture.timer      = Math.random() * 0.55 + 0.28
+        gesture.timer      = Math.random() * 1.2 + 0.8
       } else if (isListening) {
         gesture.nodTarget  = -0.018 - listenEnergy * 0.045
         gesture.tiltTarget = (Math.random() - 0.5) * 0.045
@@ -286,42 +293,42 @@ export default function FaceModel({
       const breath     = Math.sin(t * 1.18 + breathState.current.phase) * breathState.current.amplitude
       const jitterX    = Math.sin(t * 2.5) * 0.002
       const jitterY    = Math.cos(t * 2.0) * 0.002
-      const speechNod  = isSpeaking ? Math.sin(t * (4.8 + m.mid * 2.8)) * voiceEnergy * 0.035 : 0
-      const speechTilt = isSpeaking ? Math.sin(t * 2.1) * voiceEnergy * 0.016 : 0
-      const listenNod  = listenEnergy > 0 ? Math.sin(t * 3.4) * listenEnergy * 0.018 : 0
+      const speechNod  = isSpeaking ? (m.mid - m.low) * voiceEnergy * 0.018 : 0
+      const speechTilt = isSpeaking ? Math.sin(t * 0.7) * voiceEnergy * 0.006 : 0
+      const listenNod  = listenEnergy * 0.008
 
-      const tRotY = (fx - 0.5) * -1.0 + jitterY
-      const tRotX = (fy - 0.5) *  0.6 + jitterX + breath
+      const tRotY = THREE.MathUtils.clamp((fx - 0.5) * -0.55, -0.22, 0.22) + jitterY
+      const tRotX = THREE.MathUtils.clamp((fy - 0.5) * 0.35, -0.14, 0.14) + jitterX + breath
       const fRotY = tRotY + hi.rotY
       const fRotX = tRotX + hi.rotX + gesture.nod + speechNod + listenNod
       const fRotZ = gesture.tilt + speechTilt
 
-      groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, fRotY, 0.08)
-      groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, fRotX, 0.08)
-      groupRef.current.rotation.z = THREE.MathUtils.lerp(groupRef.current.rotation.z, fRotZ, 0.06)
-      groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, breath * 0.26, 0.04)
-      groupRef.current.position.z = THREE.MathUtils.lerp(groupRef.current.position.z, gesture.lean, 0.05)
+      groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, fRotY, frameBlend(0.08, dt))
+      groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, fRotX, frameBlend(0.08, dt))
+      groupRef.current.rotation.z = THREE.MathUtils.lerp(groupRef.current.rotation.z, fRotZ, frameBlend(0.06, dt))
+      groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, breath * 0.26, frameBlend(0.04, dt))
+      groupRef.current.position.z = THREE.MathUtils.lerp(groupRef.current.position.z, gesture.lean, frameBlend(0.05, dt))
     }
 
     // ────────────────────────────────────────────────────────────────────
     // MORPH TARGETS
     // ────────────────────────────────────────────────────────────────────
-    headMeshesRef.current.forEach((mesh) => {
-      const inf  = mesh.morphTargetInfluences
-      const dict = mesh.morphTargetDictionary
-      if (!inf || !dict) return
+    {
+      // Advance shared expression/viseme state once per frame, not once per mesh.
+      const inf = rigRef.current.influences
+      const dict = rigRef.current.dictionary
 
       // ── BLINK ─────────────────────────────────────────────────────────
-      const blinkV = THREE.MathUtils.clamp(blink.value + microBlink.value + voiceSharp * 0.12, 0, 1)
-      setMorph(inf, dict, 'eyeBlink_L', blinkV, 0.5)
-      setMorph(inf, dict, 'eyeBlink_R', blinkV, 0.5)
+      const blinkV = THREE.MathUtils.clamp(blink.value + microBlink.value * 0.3, 0, 1)
+      setMorph(inf, dict, 'eyeBlink_L', blinkV, 1)
+      setMorph(inf, dict, 'eyeBlink_R', blinkV, 1)
 
       // ── EYE LOOK ──────────────────────────────────────────────────────
-      let lookX = (fx - 0.5) * 2.0 + sacc.currentX
-      let lookY = (fy - 0.5) * -2.0 + sacc.currentY
+      let lookX = (fx - 0.5) * 0.75 + sacc.currentX
+      let lookY = (fy - 0.5) * -0.65 + sacc.currentY
       if (loading) {
-        lookX = Math.sin(t * 2) * 0.5
-        lookY = 0.5 + Math.cos(t * 1.5) * 0.3
+        lookX = sacc.currentX - 0.10
+        lookY = sacc.currentY + 0.16
       }
 
       setMorph(inf, dict, 'eyeLookUp_L',   lookY > 0 ?  lookY : 0, 0.1)
@@ -348,23 +355,24 @@ export default function FaceModel({
 
       // ── EXPRESSION ────────────────────────────────────────────────────
       const es = expressionState.current
-      let tSmile    = 0.22
+      let tSmile    = 0.06
       let tFrown    = 0
       let tBrowSad  = 0
       let tBrowFocus = isListening && !isSpeaking ? 0.12 + listenEnergy * 0.18 : 0
       let tCheek    = isSpeaking ? voiceEnergy * 0.08 : listenEnergy * 0.04
 
-      if (expression === 'smile') { tSmile = 0.68; tCheek += 0.24 }
-      else if (expression === 'sad') { tSmile = 0.03; tFrown = 0.5; tBrowSad = 0.42; tBrowFocus = 0.08 }
+      if (expression === 'smile') { tSmile = 0.42; tCheek += 0.16 }
+      else if (expression === 'sad') { tSmile = 0; tFrown = 0.24; tBrowSad = 0.26; tBrowFocus = 0.04 }
 
-      const es_speed = 0.18
+      const es_speed = 0.065
       es.smile    = damp(es.smile,    tSmile,    es_speed, dt * 60)
       es.frown    = damp(es.frown,    tFrown,    es_speed, dt * 60)
       es.browSad  = damp(es.browSad,  tBrowSad,  es_speed, dt * 60)
       es.browFocus = damp(es.browFocus, tBrowFocus, 0.16,  dt * 60)
       es.cheek    = damp(es.cheek,    tCheek,    0.16,    dt * 60)
 
-      const finalSmile = es.smile * (isSpeaking ? 0.86 : 1) + (isSpeaking ? voiceEnergy * 0.025 : 0)
+      const lipArticulation = Math.max(m.mouthRound, m.mouthPress, m.mouthClosed, m.mouthWide)
+      const finalSmile = es.smile * (isSpeaking ? 1 - Math.min(0.85, lipArticulation) : 1)
       const squint     = finalSmile * 0.25 + es.cheek * 0.3 + listenEnergy * 0.06 + (isSpeaking ? voiceSharp * 0.14 : 0)
 
       setMorph(inf, dict, 'mouthSmile_L',  finalSmile, 0.1)
@@ -412,7 +420,7 @@ export default function FaceModel({
         const rawOpen   = THREE.MathUtils.clamp(m.mouthOpen,   0, 0.85)
         const rawWide   = THREE.MathUtils.clamp(m.mouthWide,   0, 0.80)
         const rawRound  = THREE.MathUtils.clamp(m.mouthRound,  0, 0.80)
-        const rawPress  = THREE.MathUtils.clamp(m.mouthPress,  0, 0.85)
+        const rawPress  = THREE.MathUtils.clamp(Math.max(m.mouthPress, m.mouthClosed), 0, 0.85)
         const rawDental = THREE.MathUtils.clamp(m.mouthDental, 0, 0.80)
 
         // ── Mutual exclusion: round ↔ wide ────────────────────────────
@@ -424,7 +432,7 @@ export default function FaceModel({
         // Press suppresses open only when sealing (M/P/B).
         // Keep suppression mild so any residual press value doesn't kill
         // the opening on vowels that follow immediately after a bilabial.
-        const pressSuppress = rawPress * 0.35
+        const pressSuppress = rawPress * 0.85
         const openFinal     = THREE.MathUtils.clamp(rawOpen - pressSuppress, 0, 0.85)
 
         // ── Smooth each dimension (single pass — no double-damping) ───
@@ -449,8 +457,8 @@ export default function FaceModel({
       // vs.open is already smoothed above; applying lerp(0.35) here just
       // prevents per-mesh jitter between meshes in the same frame.
       const jawTarget = isSpeaking
-        ? THREE.MathUtils.clamp(0.015 + vs.open * 0.85 + vs.round * 0.10, 0.01, 0.75)
-        : 0.01
+        ? THREE.MathUtils.clamp(vs.open * 0.70 + vs.round * 0.06, 0, 0.62)
+        : 0
 
       setMorph(inf, dict, 'jawOpen', jawTarget, 0.35)
 
@@ -495,13 +503,13 @@ export default function FaceModel({
       // Upper-lip elevation: rises with dental consonants (F/V/S/Z)
       // and slightly with round vowels.
       const upperLip = isSpeaking
-        ? THREE.MathUtils.clamp(0.05 + vs.dental * 0.38 + vs.wide * 0.06, 0, 0.55) : 0.05
+        ? THREE.MathUtils.clamp(vs.dental * 0.28 + vs.wide * 0.04, 0, 0.36) : 0
       setMorph(inf, dict, 'mouthUpperUp_L', upperLip, 0.10)
       setMorph(inf, dict, 'mouthUpperUp_R', upperLip, 0.10)
 
       // Lower-lip depression: proportional to open vowels, opposed by press.
       const lowerLip = isSpeaking
-        ? THREE.MathUtils.clamp(vs.open * 0.55 + vs.round * 0.04 - vs.press * 0.10, 0, 0.52) : 0.02
+        ? THREE.MathUtils.clamp(vs.open * 0.38 + vs.round * 0.04 - vs.press * 0.10, 0, 0.36) : 0
       setMorph(inf, dict, 'mouthLowerDown_L', lowerLip, 0.14)
       setMorph(inf, dict, 'mouthLowerDown_R', lowerLip, 0.14)
 
@@ -524,7 +532,22 @@ export default function FaceModel({
       const dimpleV = isSpeaking ? THREE.MathUtils.clamp(vs.wide * 0.07, 0, 0.10) : 0
       setMorph(inf, dict, 'mouthDimple_L', dimpleV, 0.10)
       setMorph(inf, dict, 'mouthDimple_R', dimpleV, 0.10)
-    })
+      // Explicitly release every remaining channel in the 52-control capture rig.
+      setMorph(inf, dict, 'eyeWide_L', isListening ? 0.035 : 0, 0.08)
+      setMorph(inf, dict, 'eyeWide_R', isListening ? 0.035 : 0, 0.08)
+      setMorph(inf, dict, 'cheekPuff', 0, 0.12)
+      setMorph(inf, dict, 'mouthLeft', 0, 0.12)
+      setMorph(inf, dict, 'mouthRight', 0, 0.12)
+      setMorph(inf, dict, 'tongueOut', 0, 0.12)
+    }
+    for (const mesh of headMeshesRef.current) {
+      const inf = mesh.morphTargetInfluences
+      const dict = mesh.morphTargetDictionary
+      if (!inf || !dict) continue
+      // Three.js owns these GPU animation buffers; updates belong in useFrame.
+      // eslint-disable-next-line react-hooks/immutability
+      for (const key in dict) inf[dict[key]] = rigRef.current.influences[rigRef.current.dictionary[key]] ?? 0
+    }
   })
 
   return (

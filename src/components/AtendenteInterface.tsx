@@ -35,7 +35,7 @@ type Expression = FaceSceneProps['expression']
 
 const STOP_VOICE_PHRASES = ['pare', 'cala', 'cala a boca', 'silêncio', 'fica quieto', 'quieto', 'quieta', 'desliga', 'para com isso']
 const POSITIVE_WORDS = ['feliz', 'bom', 'ótimo', 'alegre', 'sorriso', 'parabéns', 'legal', 'sim', 'claro', 'ajudar']
-const NEGATIVE_WORDS = ['triste', 'mal', 'ruim', 'erro', 'falha', 'infelizmente', 'perdão', 'desculpe', 'difícil', 'não']
+const NEGATIVE_WORDS = ['triste', 'ruim', 'erro', 'falha', 'infelizmente', 'perdão', 'desculpe', 'difícil']
 const VISION_TRIGGERS = ['descreva', 'escanear', 'veja']
 const CREATOR_FALLBACK_TRIGGERS = ['quem e seu criado', 'quem e seu criador', 'quem criou voce', 'quem criou você', 'quem te criou']
 const CREATOR_PROFILE = PROFILES.find(profile => profile.id === 'ronaldo-charles') ?? PROFILES[0]
@@ -51,8 +51,9 @@ const includesAny = (text: string, terms: string[]) =>
 
 const analyzeSentiment = (text: string): Expression => {
   const normalized = normalizeText(text)
-  if (includesAny(normalized, POSITIVE_WORDS)) return 'smile'
-  if (includesAny(normalized, NEGATIVE_WORDS)) return 'sad'
+  const words = new Set(normalized.match(/[a-z]+/g) ?? [])
+  if (NEGATIVE_WORDS.some(word => words.has(normalizeText(word)))) return 'sad'
+  if (POSITIVE_WORDS.some(word => words.has(normalizeText(word)))) return 'smile'
   return 'neutral'
 }
 

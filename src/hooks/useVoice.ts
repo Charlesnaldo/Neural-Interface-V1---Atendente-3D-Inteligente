@@ -2,6 +2,7 @@
 
 import * as THREE from 'three'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { frameBlend } from '@/lib/face-motion'
 
 type DominantBand = 'low' | 'mid' | 'high'
 
@@ -73,8 +74,7 @@ const getBandsForChar = (char: string) => {
 const getMouthShapeForChar = (rawChar: string) => {
   const char = simplifyChar(rawChar)
 
-  // Pausa/pontuação: boca quase fechada mas NÃO totalmente
-  // — isso evita que a mandíbula "trave" entre palavras.
+  // A small relaxed lip seal between words; jaw movement can settle during pauses.
   if (/[\s,.!?;:]/.test(rawChar)) {
     return { open: 0.08, wide: 0, round: 0, closed: 0.18, press: 0.04, dental: 0 }
   }
@@ -161,12 +161,17 @@ export const useVoice = () => {
     stopLocalMeter()
     const cursor = createSpeechCursor(text)
     speechCursorRef.current = cursor
+    let previousTick = performance.now()
 
     const tick = () => {
       const activeCursor = speechCursorRef.current
       if (!activeCursor) return
 
       const now      = performance.now()
+      const dt = Math.min(0.05, Math.max(0, (now - previousTick) / 1000))
+      previousTick = now
+      const smooth = (current: number, next: number, attack: number, release: number) =>
+        smoothValue(current, next, frameBlend(attack, dt), frameBlend(release, dt))
       const elapsed  = now - activeCursor.startedAt
       const progress = THREE.MathUtils.clamp(elapsed / activeCursor.estimatedDuration, 0, 1)
 
@@ -186,20 +191,19 @@ export const useVoice = () => {
       const fade = THREE.MathUtils.clamp(Math.min(progress / 0.05, (1 - progress) / 0.06), 0, 1)
 
       // ── Pulso de sílaba ────────────────────────────────────────────────
-      // Usamos uma onda que NUNCA vai a zero — mínimo de 0.35 mesmo no vale.
-      // Isso garante que a boca sempre se mova durante a fala, mesmo entre sílabas.
+      // Keep syllable energy positive; punctuation is gated separately below.
       const phase        = elapsed / 1000 * (6.5 + activeCursor.text.length * 0.015) + activeCursor.phaseOffset
       const rawPulse     = Math.sin(phase * Math.PI)           // -1 a 1
-      const syllablePulse = 0.35 + rawPulse * 0.65             // 0.35 a 1.0  ← nunca zero
+      const syllablePulse = 0.35 + (rawPulse * 0.5 + 0.5) * 0.65
 
       // Pulso de frase (variação lenta de energia)
       const phrasePulse  = 0.6 + Math.sin(phase * 0.38) * 0.4  // 0.2 a 1.0
 
       // ── Amplitude geral ────────────────────────────────────────────────
-      // isPause reduz mas não zera — a mandíbula ainda se move levemente.
+      // Punctuation has no voice energy, allowing the face to settle naturally.
       const amplitudeTarget = THREE.MathUtils.clamp(
         (isPause
-          ? 0.12 + syllablePulse * 0.10
+          ? 0
           : 0.22 + syllablePulse * 0.55 + phrasePulse * 0.08
         ) * fade,
         0, 1
@@ -207,7 +211,7 @@ export const useVoice = () => {
 
       // ── Articulação ────────────────────────────────────────────────────
       const articulation = THREE.MathUtils.clamp(
-        (isPause ? 0.22 : 0.45 + amplitudeTarget * 0.75) * fade,
+        (isPause ? 0 : 0.45 + amplitudeTarget * 0.75) * fade,
         0, 1
       )
 
@@ -216,10 +220,9 @@ export const useVoice = () => {
 
       // ── Targets de boca ────────────────────────────────────────────────
       //
-      // openTarget: nunca cai abaixo de amplitudeTarget * 0.35 durante a fala.
-      // Isso garante que mesmo em consoantes, a mandíbula mantém algum movimento.
+      // Respect the selected lip shape: bilabials can close without a forced jaw floor.
       const openTarget   = THREE.MathUtils.clamp(
-        Math.max(mouthShape.open * articulation, amplitudeTarget * 0.35),
+        mouthShape.open * articulation,
         0, 0.85
       )
       const wideTarget   = THREE.MathUtils.clamp(mouthShape.wide   * articulation, 0, 0.88)
@@ -240,18 +243,18 @@ export const useVoice = () => {
       //            release moderado (0.24) para não ficar aberta demais.
       const prev = audioMetricsRef.current
       audioMetricsRef.current = {
-        amplitude:   smoothValue(prev.amplitude,   amplitudeTarget, 0.45, 0.20),
-        sharpness:   smoothValue(prev.sharpness,   sharpness,       0.34, 0.12),
-        low:         smoothValue(prev.low,         low,             0.34, 0.12),
-        mid:         smoothValue(prev.mid,         mid,             0.34, 0.12),
-        high:        smoothValue(prev.high,        high,            0.36, 0.12),
+        amplitude:   smooth(prev.amplitude,   amplitudeTarget, 0.45, 0.20),
+        sharpness:   smooth(prev.sharpness,   sharpness,       0.34, 0.12),
+        low:         smooth(prev.low,         low,             0.34, 0.12),
+        mid:         smooth(prev.mid,         mid,             0.34, 0.12),
+        high:        smooth(prev.high,        high,            0.36, 0.12),
         dominantBand: getDominantBand(low, mid, high),
-        mouthOpen:   smoothValue(prev.mouthOpen,   openTarget,   0.68, 0.24),
-        mouthWide:   smoothValue(prev.mouthWide,   wideTarget,   0.52, 0.18),
-        mouthRound:  smoothValue(prev.mouthRound,  roundTarget,  0.52, 0.20),
-        mouthClosed: smoothValue(prev.mouthClosed, closedTarget, 0.62, 0.30),
-        mouthPress:  smoothValue(prev.mouthPress,  pressTarget,  0.62, 0.28),
-        mouthDental: smoothValue(prev.mouthDental, dentalTarget, 0.48, 0.20),
+        mouthOpen:   smooth(prev.mouthOpen,   openTarget,   0.68, 0.24),
+        mouthWide:   smooth(prev.mouthWide,   wideTarget,   0.52, 0.18),
+        mouthRound:  smooth(prev.mouthRound,  roundTarget,  0.52, 0.20),
+        mouthClosed: smooth(prev.mouthClosed, closedTarget, 0.62, 0.30),
+        mouthPress:  smooth(prev.mouthPress,  pressTarget,  0.62, 0.28),
+        mouthDental: smooth(prev.mouthDental, dentalTarget, 0.48, 0.20),
       }
 
       setAudioMetrics(audioMetricsRef.current)

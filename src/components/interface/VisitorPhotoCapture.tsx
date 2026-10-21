@@ -7,7 +7,7 @@ import type { TrackedFace } from '@/hooks/useVision'
 type Receipt = { id: string; secret: string }
 const key = 'zord-photo-receipts-v1'
 
-export function VisitorPhotoCapture({ videoRef, faces, active }: { videoRef: RefObject<HTMLVideoElement | null>; faces: TrackedFace[]; active: boolean }) {
+export function VisitorPhotoCapture({ videoRef, faces, active, onSaved }: { videoRef: RefObject<HTMLVideoElement | null>; faces: TrackedFace[]; active: boolean; onSaved: () => void }) {
   const [photo, setPhoto] = useState('')
   const [name, setName] = useState('')
   const [consent, setConsent] = useState(false)
@@ -43,6 +43,7 @@ export function VisitorPhotoCapture({ videoRef, faces, active }: { videoRef: Ref
       const next = [...receipts, { id: data as string, secret }]
       localStorage.setItem(key, JSON.stringify(next)); setReceipts(next)
       setPhoto(''); setName(''); setConsent(false); setMessage('Foto salva. Somente o administrador pode consultar. Você pode excluí-la aqui neste navegador.')
+      onSaved()
     } catch { setMessage('Não foi possível confirmar o salvamento. Tente novamente.'); }
     finally { setBusy(false) }
   }

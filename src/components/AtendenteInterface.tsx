@@ -14,6 +14,7 @@ import { ProfileCard } from './interface/ProfileCard'
 import { AssistantPanel } from './interface/AssistantPanel'
 import { FaceRegistry } from './interface/FaceRegistry'
 import { VisitorPhotoCapture } from './interface/VisitorPhotoCapture'
+import { FaceScanOverlay } from './interface/FaceScanOverlay'
 import { emptyStore, personalCommand } from '@/lib/assistant-store'
 import { usePersonalStore } from '@/hooks/usePersonalStore'
 import { createClient } from '@/lib/supabase/client'
@@ -422,14 +423,14 @@ export default function AtendenteInterface({ userId }: { userId: string }) {
       <div className={cameraEnabled ? 'absolute bottom-24 left-4 z-50 w-56 overflow-hidden rounded-xl border border-cyan-400/40 bg-black sm:w-72' : 'hidden'}>
         <div className="relative aspect-[4/3]">
           <video ref={videoRef} autoPlay playsInline muted aria-label="Rastreamento da câmera" className="h-full w-full object-fill" />
-          {trackedFaces.map(face => <div key={face.id} className="pointer-events-none absolute border-2 border-cyan-300" style={{ left: `${face.x * 100}%`, top: `${face.y * 100}%`, width: `${face.width * 100}%`, height: `${face.height * 100}%` }}><span className="absolute -top-5 left-0 whitespace-nowrap bg-black/80 px-1 text-xs text-cyan-200">Rosto {face.id}</span></div>)}
+          <FaceScanOverlay faces={trackedFaces} />
         </div>
         <p role="status" className="p-2 text-xs text-cyan-100">{trackedFaces.length} rosto(s) no enquadramento</p>
         {!userId && <p className="px-2 pb-2 text-[11px] text-neutral-400">Sem identificação e sem salvamento automático. Conversa mantida apenas nesta página.</p>}
         {faceError && <p role="alert" className="px-2 pb-2 text-xs text-red-300">{faceError}</p>}
       </div>
 
-      {!userId && <div className="absolute bottom-24 right-4 z-50 max-w-56 rounded-xl bg-neutral-950/95"><VisitorPhotoCapture videoRef={videoRef} faces={trackedFaces} active={cameraEnabled} /></div>}
+      {!userId && <div className="absolute bottom-24 right-4 z-50 max-w-56 rounded-xl bg-neutral-950/95"><VisitorPhotoCapture videoRef={videoRef} faces={trackedFaces} active={cameraEnabled} onSaved={() => { setCameraEnabled(false); setAutoCapture(false); setVisionReport('') }} /></div>}
       {activeProfile && (
         <ProfileCard profile={activeProfile} onClose={closeProfile} />
       )}
